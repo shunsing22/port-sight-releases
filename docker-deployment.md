@@ -415,66 +415,145 @@ Then run `docker compose pull && docker compose up -d` to apply.
 
 HTTPS activates automatically when certificate files are present. No config files to edit.
 
-### Step 1 — Get your certificate files
+### What you need
 
-You need two files:
-- `cert.pem` — your SSL certificate (may include the intermediate chain)
-- `key.pem` — your private key
+Port-Sight expects two files in the `certs/` folder:
 
-These can come from:
-- Your IT team or certificate authority
-- A free provider like Let's Encrypt
-- A self-signed certificate (for testing or internal-only use)
+| File | What it is |
+|------|-----------|
+| `cert.pem` | Your SSL/TLS certificate (may include the intermediate chain) |
+| `key.pem` | The private key that matches the certificate |
 
-**To generate a self-signed certificate** (valid 1 year):
+There are three ways to get these files, depending on your situation:
+
+---
+
+### Option A — Request a certificate from your IT team or company CA
+
+This is the most common approach in corporate environments. Your organization likely has an internal Certificate Authority (CA) or a process for requesting certificates.
+
+**Step 1 — Generate a private key and Certificate Signing Request (CSR):**
+
+A CSR is a file you send to your CA that says "I need a certificate for this server." The CA uses it to create your certificate.
+
+```bash
+# Linux / macOS — run from the port-sight install folder
+mkdir -p certs
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout certs/key.pem \
+  -out certs/portsight.csr \
+  -subj "/CN=portsight.company.com"
+```
+
+```powershell
+# Windows (PowerShell) — requires OpenSSL installed, or use Git Bash
+mkdir certs -Force
+openssl req -new -newkey rsa:2048 -nodes `
+  -keyout certs/key.pem `
+  -out certs/portsight.csr `
+  -subj "/CN=portsight.company.com"
+```
+
+Replace `portsight.company.com` with the actual hostname or domain name users will type in their browser. If users will access it by IP address, use the IP instead (e.g., `/CN=192.168.1.50`).
+
+This creates two files:
+- `certs/key.pem` — your private key (**keep this secret**, do not send it to anyone)
+- `certs/portsight.csr` — the CSR to send to your CA
+
+**Step 2 — Submit the CSR to your CA:**
+
+Send the `portsight.csr` file to your IT team or certificate authority. They will return a signed certificate file (often called `cert.pem`, `certificate.crt`, or similar).
+
+**Step 3 — Save the certificate:**
+
+Save the certificate your CA returned as `certs/cert.pem`. If they also provided an intermediate/chain certificate, append it to the same file:
+
+```bash
+# If you received separate cert and chain files, combine them:
+cat your-certificate.crt intermediate-chain.crt > certs/cert.pem
+```
+
+```powershell
+# Windows equivalent:
+Get-Content your-certificate.crt, intermediate-chain.crt | Set-Content certs/cert.pem
+```
+
+You should now have both files in `certs/`:
+```
+port-sight/
+  certs/
+    cert.pem    ← certificate from your CA
+    key.pem     ← private key (generated in Step 1)
+```
+
+---
+
+### Option B — Self-signed certificate (for testing or internal use)
+
+A self-signed certificate encrypts traffic but browsers will show a security warning because it's not issued by a trusted CA. This is fine for internal tools or testing.
 
 ```bash
 # Linux / macOS
 mkdir -p certs
 openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem \
   -days 365 -nodes -subj "/CN=portsight"
+```
 
-# Windows (PowerShell) — requires OpenSSL installed, or use Git Bash:
-mkdir certs
+```powershell
+# Windows (PowerShell) — requires OpenSSL installed, or use Git Bash
+mkdir certs -Force
 openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem `
   -days 365 -nodes -subj "/CN=portsight"
 ```
 
-### Step 2 — Place the files
+> **Note:** Users will see a "Your connection is not private" warning in their browser. They can click through it (Advanced → Proceed), but this is only suitable for internal/testing use — not customer-facing deployments.
 
-Put `cert.pem` and `key.pem` in the `certs/` folder at the project root:
+---
+
+### Option C — Free certificate from Let's Encrypt
+
+Let's Encrypt provides free, trusted certificates that browsers accept without warnings. This requires your server to be reachable from the internet on port 80 (for domain validation).
+
+1. Install **certbot**: https://certbot.eff.org/instructions
+2. Run certbot to get your certificate:
+   ```bash
+   sudo certbot certonly --standalone -d portsight.company.com
+   ```
+3. Copy the generated files to Port-Sight's `certs/` folder:
+   ```bash
+   sudo cp /etc/letsencrypt/live/portsight.company.com/fullchain.pem ~/port-sight/certs/cert.pem
+   sudo cp /etc/letsencrypt/live/portsight.company.com/privkey.pem ~/port-sight/certs/key.pem
+   ```
+
+Let's Encrypt certificates expire every 90 days. Certbot can auto-renew them, but you'll need to copy the renewed files and restart the frontend container.
+
+---
+
+### Activate HTTPS
+
+Once your `cert.pem` and `key.pem` are in the `certs/` folder:
+
+**1. Update `.env`** — Change `CORS_ORIGINS` from `http://` to `https://`:
 
 ```
-port-sight/
-  certs/
-    cert.pem
-    key.pem
-  docker-compose.yml
-  .env
-  ...
-```
-
-### Step 3 — Update .env
-
-```bash
 CORS_ORIGINS=https://portsight.company.com
 ```
 
-If you're using a non-standard HTTPS port:
+If you're using a non-standard HTTPS port (anything other than 443):
 
-```bash
+```
 HTTPS_PORT=8443
 CORS_ORIGINS=https://portsight.company.com:8443
 ```
 
-### Step 4 — Restart
+**2. Restart the frontend container:**
 
 ```bash
 docker compose restart frontend
 ```
 
 That's it. The frontend container detects the cert files on startup and automatically:
-- Enables HTTPS on port 443
+- Enables HTTPS on port 443 (or your custom `HTTPS_PORT`)
 - Redirects all HTTP traffic to HTTPS
 
 You'll see this in the logs:
@@ -485,10 +564,11 @@ You'll see this in the logs:
 
 ### Disabling HTTPS
 
-To go back to HTTP-only, simply remove or rename the `certs/` folder and restart:
+To go back to HTTP-only, remove or rename the `certs/` folder, update `CORS_ORIGINS` back to `http://`, and restart:
 
 ```bash
 mv certs certs.bak
+# Edit .env: change CORS_ORIGINS back to http://...
 docker compose restart frontend
 ```
 
