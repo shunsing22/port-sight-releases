@@ -9,82 +9,81 @@
 #   .\install.ps1
 # ─────────────────────────────────────────────────────────────
 
-$ErrorActionPreference = "Stop"
+& {
+  $ErrorActionPreference = "Stop"
 
-$InstallDir = if ($env:PORT_SIGHT_DIR) { $env:PORT_SIGHT_DIR } else { "$HOME\port-sight" }
-$ComposeUrl = "https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/docker-compose.prod.yml"
+  $InstallDir = if ($env:PORT_SIGHT_DIR) { $env:PORT_SIGHT_DIR } else { "$HOME\port-sight" }
+  $ComposeUrl = "https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/docker-compose.prod.yml"
 
-Write-Host ""
-Write-Host "  +------------------------------------+"
-Write-Host "  |       Port-Sight Installer         |"
-Write-Host "  +------------------------------------+"
-Write-Host ""
-
-# ── Pre-flight checks ──────────────────────────────────────
-try { $null = Get-Command docker -ErrorAction Stop } catch {
   Write-Host ""
-  Write-Host "  ERROR: Docker is not installed." -ForegroundColor Red
+  Write-Host "  +------------------------------------+"
+  Write-Host "  |       Port-Sight Installer         |"
+  Write-Host "  +------------------------------------+"
   Write-Host ""
-  Write-Host "  Install Docker Desktop from:"
-  Write-Host "    https://www.docker.com/products/docker-desktop/" -ForegroundColor Cyan
-  Write-Host ""
-  Write-Host "  After installing, launch Docker Desktop and wait for it to start,"
-  Write-Host "  then re-run this script."
-  Write-Host ""
-  Read-Host "  Press Enter to close"
-  return
-}
 
-$composeCheck = $null
-try { $composeCheck = & docker compose version 2>&1 } catch {}
-if (-not $composeCheck -or $LASTEXITCODE -ne 0) {
-  Write-Host ""
-  Write-Host "  ERROR: Docker Compose is not available." -ForegroundColor Red
-  Write-Host ""
-  Write-Host "  Docker Compose is included with Docker Desktop."
-  Write-Host "  Make sure Docker Desktop is running (check the system tray)."
-  Write-Host ""
-  Read-Host "  Press Enter to close"
-  return
-}
+  # ── Pre-flight checks ──────────────────────────────────────
+  try { $null = Get-Command docker -ErrorAction Stop } catch {
+    Write-Host ""
+    Write-Host "  ERROR: Docker is not installed." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Install Docker Desktop from:"
+    Write-Host "    https://www.docker.com/products/docker-desktop/" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  After installing, launch Docker Desktop and wait for it to start,"
+    Write-Host "  then re-run this script."
+    Write-Host ""
+    return
+  }
 
-# ── Create install directory ───────────────────────────────
-Write-Host "Install directory: $InstallDir"
-New-Item -ItemType Directory -Path "$InstallDir\certs" -Force | Out-Null
-Set-Location $InstallDir
+  $composeCheck = $null
+  try { $composeCheck = & docker compose version 2>&1 } catch {}
+  if (-not $composeCheck -or $LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "  ERROR: Docker Compose is not available." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Docker Compose is included with Docker Desktop."
+    Write-Host "  Make sure Docker Desktop is running (check the system tray)."
+    Write-Host ""
+    return
+  }
 
-# ── Download docker-compose.prod.yml ───────────────────────
-Write-Host "Downloading docker-compose.prod.yml..."
-Invoke-WebRequest -Uri $ComposeUrl -OutFile "docker-compose.yml" -UseBasicParsing
+  # ── Create install directory ───────────────────────────────
+  Write-Host "Install directory: $InstallDir"
+  New-Item -ItemType Directory -Path "$InstallDir\certs" -Force | Out-Null
+  Set-Location $InstallDir
 
-# ── Generate .env if it doesn't exist ──────────────────────
-if (Test-Path ".env") {
-  Write-Host "Existing .env found - keeping current configuration."
-} else {
-  Write-Host "Generating .env with secure random secrets..."
+  # ── Download docker-compose.prod.yml ───────────────────────
+  Write-Host "Downloading docker-compose.prod.yml..."
+  Invoke-WebRequest -Uri $ComposeUrl -OutFile "docker-compose.yml" -UseBasicParsing
 
-  # Generate secrets using .NET crypto
-  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  # ── Generate .env if it doesn't exist ──────────────────────
+  if (Test-Path ".env") {
+    Write-Host "Existing .env found - keeping current configuration."
+  } else {
+    Write-Host "Generating .env with secure random secrets..."
 
-  # SECRET_KEY: 64 hex chars
-  $skBytes = New-Object byte[] 32
-  $rng.GetBytes($skBytes)
-  $SecretKey = -join ($skBytes | ForEach-Object { $_.ToString("x2") })
+    # Generate secrets using .NET crypto
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 
-  # POSTGRES_PASSWORD: 32 alphanumeric chars
-  $pgBytes = New-Object byte[] 32
-  $rng.GetBytes($pgBytes)
-  $PgPassword = [Convert]::ToBase64String($pgBytes) -replace '[/+=]','' | Select-Object -First 1
-  $PgPassword = $PgPassword.Substring(0, [Math]::Min(32, $PgPassword.Length))
+    # SECRET_KEY: 64 hex chars
+    $skBytes = New-Object byte[] 32
+    $rng.GetBytes($skBytes)
+    $SecretKey = -join ($skBytes | ForEach-Object { $_.ToString("x2") })
 
-  # CREDENTIAL_ENCRYPTION_KEY: Fernet key (base64url-encoded 32 bytes)
-  $fernetBytes = New-Object byte[] 32
-  $rng.GetBytes($fernetBytes)
-  $FernetKey = [Convert]::ToBase64String($fernetBytes) -replace '\+','-' -replace '/','_'
+    # POSTGRES_PASSWORD: 32 alphanumeric chars
+    $pgBytes = New-Object byte[] 32
+    $rng.GetBytes($pgBytes)
+    $PgPassword = [Convert]::ToBase64String($pgBytes) -replace '[/+=]','' | Select-Object -First 1
+    $PgPassword = $PgPassword.Substring(0, [Math]::Min(32, $PgPassword.Length))
 
-  $timestamp = (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + " UTC"
+    # CREDENTIAL_ENCRYPTION_KEY: Fernet key (base64url-encoded 32 bytes)
+    $fernetBytes = New-Object byte[] 32
+    $rng.GetBytes($fernetBytes)
+    $FernetKey = [Convert]::ToBase64String($fernetBytes) -replace '\+','-' -replace '/','_'
 
-  $envContent = @"
+    $timestamp = (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + " UTC"
+
+    $envContent = @"
 # ── Port-Sight Configuration ─────────────────────────────
 # Generated by install.ps1 on $timestamp
 
@@ -120,32 +119,33 @@ POLL_SCHEDULE_MINUTE=0
 # PORT_SIGHT_VERSION=1.3.0
 "@
 
-  $envContent | Out-File -FilePath ".env" -Encoding ascii -NoNewline
-  Write-Host ".env created with auto-generated secrets."
+    $envContent | Out-File -FilePath ".env" -Encoding ascii -NoNewline
+    Write-Host ".env created with auto-generated secrets."
+  }
+
+  # ── Pull images and start ─────────────────────────────────
+  Write-Host ""
+  Write-Host "Pulling Docker images..."
+  & docker compose pull
+
+  Write-Host ""
+  Write-Host "Starting Port-Sight..."
+  & docker compose up -d
+
+  Write-Host ""
+  Write-Host "  Port-Sight is running!" -ForegroundColor Green
+  Write-Host ""
+  Write-Host "  Open http://localhost in your browser to complete setup."
+  Write-Host "  (First visit will prompt you to create an admin account.)"
+  Write-Host ""
+  Write-Host "  Useful commands:"
+  Write-Host "    cd $InstallDir"
+  Write-Host "    docker compose logs -f                                # View logs"
+  Write-Host "    docker compose down                                   # Stop"
+  Write-Host "    docker compose pull; docker compose up -d             # Update"
+  Write-Host ""
+  Write-Host "  For HTTPS, place your cert.pem and key.pem in:"
+  Write-Host "    $InstallDir\certs\"
+  Write-Host "  Then restart: docker compose restart frontend"
+  Write-Host ""
 }
-
-# ── Pull images and start ─────────────────────────────────
-Write-Host ""
-Write-Host "Pulling Docker images..."
-& docker compose pull
-
-Write-Host ""
-Write-Host "Starting Port-Sight..."
-& docker compose up -d
-
-Write-Host ""
-Write-Host "  Port-Sight is running!" -ForegroundColor Green
-Write-Host ""
-Write-Host "  Open http://localhost in your browser to complete setup."
-Write-Host "  (First visit will prompt you to create an admin account.)"
-Write-Host ""
-Write-Host "  Useful commands:"
-Write-Host "    cd $InstallDir"
-Write-Host "    docker compose logs -f                                # View logs"
-Write-Host "    docker compose down                                   # Stop"
-Write-Host "    docker compose pull; docker compose up -d             # Update"
-Write-Host ""
-Write-Host "  For HTTPS, place your cert.pem and key.pem in:"
-Write-Host "    $InstallDir\certs\"
-Write-Host "  Then restart: docker compose restart frontend"
-Write-Host ""
