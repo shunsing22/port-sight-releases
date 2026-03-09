@@ -22,19 +22,30 @@ Write-Host ""
 
 # ── Pre-flight checks ──────────────────────────────────────
 try { $null = Get-Command docker -ErrorAction Stop } catch {
-  Write-Host "Error: Docker is not installed." -ForegroundColor Red
-  Write-Host "  Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
-  Write-Host "  Make sure Docker Desktop is running before re-running this script."
-  exit 1
+  Write-Host ""
+  Write-Host "  ERROR: Docker is not installed." -ForegroundColor Red
+  Write-Host ""
+  Write-Host "  Install Docker Desktop from:"
+  Write-Host "    https://www.docker.com/products/docker-desktop/" -ForegroundColor Cyan
+  Write-Host ""
+  Write-Host "  After installing, launch Docker Desktop and wait for it to start,"
+  Write-Host "  then re-run this script."
+  Write-Host ""
+  Read-Host "  Press Enter to close"
+  return
 }
 
 $composeCheck = $null
 try { $composeCheck = & docker compose version 2>&1 } catch {}
 if (-not $composeCheck -or $LASTEXITCODE -ne 0) {
-  Write-Host "Error: Docker Compose is not available." -ForegroundColor Red
+  Write-Host ""
+  Write-Host "  ERROR: Docker Compose is not available." -ForegroundColor Red
+  Write-Host ""
   Write-Host "  Docker Compose is included with Docker Desktop."
-  Write-Host "  Make sure Docker Desktop is running."
-  exit 1
+  Write-Host "  Make sure Docker Desktop is running (check the system tray)."
+  Write-Host ""
+  Read-Host "  Press Enter to close"
+  return
 }
 
 # ── Create install directory ───────────────────────────────
