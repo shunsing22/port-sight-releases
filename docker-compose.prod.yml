@@ -30,6 +30,8 @@ services:
       STRIP_SWITCH_DOMAIN: ${STRIP_SWITCH_DOMAIN:-false}
       POLL_SCHEDULE_HOUR: ${POLL_SCHEDULE_HOUR:-2}
       POLL_SCHEDULE_MINUTE: ${POLL_SCHEDULE_MINUTE:-0}
+    volumes:
+      - backups:/app/backups
 
   frontend:
     image: ghcr.io/shunsing22/port-sight/frontend:${PORT_SIGHT_VERSION:-latest}
@@ -44,3 +46,4 @@ services:
 
 volumes:
   pgdata:
+  backups:
