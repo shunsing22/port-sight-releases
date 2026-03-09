@@ -287,44 +287,127 @@ Open `http://localhost` in a browser. The first-run wizard will prompt you to cr
 
 ### Configuration Reference
 
-Edit `.env` with the values below. If you used the Quick Install script, these are already generated for you.
+The `.env` file controls how Port-Sight runs. If you used the **Quick Install** script, it will ask you two questions (port and server address) and auto-generate everything else — you can skip this section unless you need to change something later.
 
-#### Required variables
+If you used the **Manual Install**, open `.env` in a text editor and review the settings below.
 
-| Variable | What to do |
-|----------|-----------|
-| `POSTGRES_PASSWORD` | Pick a strong password (16+ characters) |
-| `SECRET_KEY` | Run: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
-| `CREDENTIAL_ENCRYPTION_KEY` | Run: `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `CORS_ORIGINS` | Set to how users access the app (see examples below) |
+> **To apply changes:** After editing `.env`, restart with `docker compose up -d` from the install folder.
 
-#### CORS_ORIGINS examples
+---
 
-This must match the URL users type in their browser:
+#### Network Settings
+
+**`HTTP_PORT`** — The port number Port-Sight listens on for HTTP traffic.
+
+The default is `80`, which is the standard web port (so users just type `http://your-server` without specifying a port). If another application on this server is already using port 80, change this to an available port.
 
 ```
-# HTTP on default port 80
+HTTP_PORT=80       # default — users access via http://your-server
+HTTP_PORT=3000     # alternative — users access via http://your-server:3000
+```
+
+> **Planning to use HTTPS?** Start with HTTP on port 80 for now. After installation is working, you can enable HTTPS by placing certificate files in the `certs/` folder — see the [Enabling HTTPS](#enabling-https) section below. HTTPS will automatically activate on port 443, and HTTP will redirect to it.
+
+**`CORS_ORIGINS`** — The URL(s) that users type in their browser to reach Port-Sight.
+
+CORS (Cross-Origin Resource Sharing) is a browser security feature. Port-Sight's backend needs to know the exact URL that users will access so it can allow the frontend to communicate with it. **If this doesn't match what users type in their browser, the app will load but show errors when trying to fetch data.**
+
+You can list **multiple addresses** separated by commas (no spaces around the commas). This is common when the server is accessed both locally and over the network.
+
+```
+# Single address — users access via IP on default port 80:
 CORS_ORIGINS=http://192.168.1.50
 
-# HTTP on custom port
+# Single address — using a custom port:
 CORS_ORIGINS=http://192.168.1.50:3000
 
-# HTTPS with domain
+# Single address — domain name with HTTPS:
 CORS_ORIGINS=https://portsight.company.com
 
-# Multiple origins (comma-separated)
+# Multiple addresses — accessed locally AND over the network:
 CORS_ORIGINS=http://localhost,http://192.168.1.50
+
+# Multiple addresses — IP, hostname, and domain all work:
+CORS_ORIGINS=http://localhost,http://192.168.1.50,http://portsight.company.com
 ```
 
-#### Changing the port
+> **Common mistake:** Setting `CORS_ORIGINS=http://localhost` but then accessing the app from another computer at `http://192.168.1.50`. The browser will block API calls because the address doesn't match. **Add every address that users might type** — it's better to list too many than too few.
 
-If port 80 is already in use, set `HTTP_PORT` in `.env`:
+**`HTTPS_PORT`** — Uncomment this line to enable HTTPS. You also need to place certificate files in the `certs/` folder (see the [Enabling HTTPS](#enabling-https) section below).
+
+---
+
+#### Database Settings
+
+Port-Sight includes its own database — you do **not** need to install or manage a separate database server. These settings control the built-in PostgreSQL container.
+
+**`POSTGRES_USER`**, **`POSTGRES_PASSWORD`**, **`POSTGRES_DB`** — Credentials for the built-in database. The install script generates a strong random password automatically. **Do not change these after first run** unless you are willing to recreate the database from scratch.
+
+> **For manual install only:** If you're setting these yourself, pick a strong password (16+ characters). The other two can stay as `portsight`.
+
+**Using an external database** (advanced): If you want to host the database on a separate server (e.g., an existing PostgreSQL server on your network, or a cloud service like Amazon RDS or Neon), you'll need to edit `docker-compose.yml` directly:
+
+1. Remove the `db` service block and the `pgdata` volume at the bottom
+2. Remove `depends_on: db` from the `backend` service
+3. Change the `DATABASE_URL` line in the `backend` environment to point to your external database:
+   ```
+   DATABASE_URL: postgresql+asyncpg://username:password@your-db-server:5432/portsight
+   ```
+4. Run `docker compose up -d` to apply
+
+Most users should use the built-in database — it requires zero setup and is backed up with the Docker volume. Only use an external database if your organization requires centralized database management.
+
+---
+
+#### Security Secrets
+
+These are cryptographic keys that Port-Sight uses internally. The install script generates them automatically. **Do not share these with anyone or post them publicly.**
+
+**`SECRET_KEY`** — Used to sign login tokens (JWTs). If someone gets this key, they can forge login sessions. To generate one manually:
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+**`CREDENTIAL_ENCRYPTION_KEY`** — Used to encrypt SNMP passwords stored in the database. If you lose this key, you'll need to re-enter all switch SNMP credentials. To generate one manually:
+
+```bash
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+---
+
+#### Authentication
+
+**`ACCESS_TOKEN_EXPIRE_MINUTES`** — How many minutes a user stays logged in before their session expires and they need to log in again. Default is `60` (1 hour). Set higher for convenience, lower for security.
+
+**`ALGORITHM`** — The algorithm used to sign login tokens. Leave this as `HS256` unless you have a specific reason to change it.
+
+---
+
+#### Display Options
+
+**`STRIP_SWITCH_DOMAIN`** — Controls how switch names appear in the UI. If your switches report their names as fully qualified domain names (e.g., `sw1.building-a.company.com`), set this to `true` to display just the short name (`sw1`). Default is `false` (show the full name).
+
+---
+
+#### Scheduled Polling
+
+Port-Sight can automatically poll all your switches on a recurring schedule. These settings control the default daily poll time.
+
+**`POLL_SCHEDULE_HOUR`** and **`POLL_SCHEDULE_MINUTE`** — The time of day to run the automatic poll, in 24-hour format using the server's timezone. Default is `2:00 AM` (hour=2, minute=0). You can also configure more complex schedules (hourly, weekly, etc.) from the web UI after installation.
+
+---
+
+#### Version Pinning
+
+**`PORT_SIGHT_VERSION`** — By default, Port-Sight uses the latest version when you run `docker compose pull`. To lock to a specific version (e.g., if you want to test before upgrading), uncomment this line and set a version number:
 
 ```
-HTTP_PORT=3000
+PORT_SIGHT_VERSION=1.3.0
 ```
 
-Then access the app at `http://your-server:3000` and update `CORS_ORIGINS` to match.
+Then run `docker compose pull && docker compose up -d` to apply.
 
 ---
 
