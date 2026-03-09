@@ -596,6 +596,45 @@ The database volume (`pgdata`) persists across restarts and rebuilds. Your data 
 
 ---
 
+## Backup & Restore
+
+Port-Sight includes built-in database backup and restore, accessible from the **Admin > Backups** page.
+
+### Creating a Backup
+
+Click **Create Backup** in the admin UI. This runs `pg_dump` against the database and saves a compressed `.sql.gz` file. Backups are stored in a persistent Docker volume (`backups`), so they survive container restarts.
+
+You can also **download** backups to your local machine for offsite storage.
+
+### Restoring a Backup
+
+Click **Restore from File**, confirm the warning, then select a `.sql.gz` backup file. This will **overwrite all current data** in the database.
+
+### What backups include
+
+Database backups cover all application data: switches, interfaces, poll history, users, settings, licenses, filter profiles, flags, and VLANs.
+
+### What backups do NOT include
+
+- **TLS certificates** in the `certs/` folder — back these up manually
+- **`.env` configuration** (database passwords, encryption keys, CORS settings) — document or save separately
+- **Docker volumes and images** — managed by Docker, not the application
+
+### Disaster recovery
+
+In a disaster recovery scenario:
+1. Re-run the install script on the new server
+2. Restore your `.env` file (or reconfigure settings)
+3. Restore your `certs/` folder (if using HTTPS)
+4. Upload a database backup via the Backups page
+5. Refresh or re-login
+
+### Backup retention
+
+Up to 20 backups are retained. When the limit is reached, the oldest backup is automatically deleted.
+
+---
+
 ## Common Commands
 
 ```bash
