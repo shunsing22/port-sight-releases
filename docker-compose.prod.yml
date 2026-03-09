@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-portsight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-portsight}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-portsight}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    image: ghcr.io/shunsing22/port-sight/backend:${PORT_SIGHT_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-portsight}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-portsight}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?Set CREDENTIAL_ENCRYPTION_KEY in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      STRIP_SWITCH_DOMAIN: ${STRIP_SWITCH_DOMAIN:-false}
+      POLL_SCHEDULE_HOUR: ${POLL_SCHEDULE_HOUR:-2}
+      POLL_SCHEDULE_MINUTE: ${POLL_SCHEDULE_MINUTE:-0}
+
+  frontend:
+    image: ghcr.io/shunsing22/port-sight/frontend:${PORT_SIGHT_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+
+volumes:
+  pgdata:
