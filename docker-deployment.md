@@ -745,6 +745,56 @@ docker compose down -v          # stop and remove volumes (DELETES ALL DATA)
 docker compose up -d --build    # rebuild everything fresh
 ```
 
+### Uninstalling / Clean Reinstall
+
+Use this to completely remove Port-Sight and start fresh — for example, to test a new version or decommission the server.
+
+⚠️ This permanently deletes all data (switches, poll history, settings, users, backups). Make sure you have a backup first if the data matters.
+
+**Linux / macOS:**
+
+```bash
+# 1. Find the install directory (if you've forgotten where it is)
+docker inspect port-sight-db-1 | grep "working_dir"
+
+# 2. Stop containers and delete all volumes
+cd /path/to/install/dir
+docker compose down -v
+
+# 3. Remove the install directory
+cd ~
+rm -rf /path/to/install/dir
+
+# 4. (Optional) Remove cached Docker images to force a fresh pull
+docker rmi ghcr.io/shunsing22/port-sight/backend:latest
+docker rmi ghcr.io/shunsing22/port-sight/frontend:latest
+
+# 5. Reinstall
+curl -fsSL https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+# 1. Find the install directory (if you've forgotten where it is)
+docker inspect port-sight-db-1 | Select-String "working_dir"
+
+# 2. Stop containers and delete all volumes
+cd C:\path\to\install\dir
+docker compose down -v
+
+# 3. Remove the install directory
+cd $env:USERPROFILE
+Remove-Item -Recurse -Force C:\path\to\install\dir
+
+# 4. (Optional) Remove cached Docker images to force a fresh pull
+docker rmi ghcr.io/shunsing22/port-sight/backend:latest
+docker rmi ghcr.io/shunsing22/port-sight/frontend:latest
+
+# 5. Reinstall (run in PowerShell as Administrator)
+irm https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/install.ps1 | iex
+```
+
 ---
 
 ## Security Notes
