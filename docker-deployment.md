@@ -622,12 +622,122 @@ Database backups cover all application data: switches, interfaces, poll history,
 
 ### Disaster recovery
 
-In a disaster recovery scenario:
-1. Re-run the install script on the new server
-2. Restore your `.env` file (or reconfigure settings)
-3. Restore your `certs/` folder (if using HTTPS)
-4. Upload a database backup via the Backups page
-5. Refresh or re-login
+In a disaster recovery scenario you are moving Port-Sight from a failed server to
+a new one. Both servers run Docker — this is the standard customer deployment path.
+
+#### The encryption key problem
+
+The install script generates a random `CREDENTIAL_ENCRYPTION_KEY` on every fresh
+install. Port-Sight uses this key to encrypt all SNMP credentials stored in the
+database. **If you restore a backup onto a new server that has a different key,
+the backend cannot decrypt those credentials and every poll will fail with a
+"Config error."**
+
+The solution is to copy the original server's `CREDENTIAL_ENCRYPTION_KEY` into
+the new server's `.env` before starting the stack. The backup restore itself
+will not fix this — it only restores database rows, not the `.env` file.
+
+#### Important: `docker compose restart` does NOT reload `.env`
+
+`docker compose restart` keeps the environment variables that were baked in when
+the container was first created. It does **not** re-read `.env`. Whenever you
+change a value in `.env` you must recreate the containers:
+
+```bash
+# Always use this after changing .env — not restart
+docker compose up -d
+
+# Force a single container to reload if needed
+docker compose up -d --force-recreate backend
+```
+
+Verify the running container has the value you expect:
+
+```bash
+docker compose exec backend env | grep CREDENTIAL_ENCRYPTION_KEY
+```
+
+#### DR procedure
+
+1. **Install Port-Sight on the new server:**
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/install.sh | bash
+   ```
+   Let it complete, then stop the stack:
+   ```bash
+   cd /opt/port-sight && docker compose down
+   ```
+
+2. **Update `.env` on the new server** with the encryption keys from the old server.
+   The simplest approach is to copy the whole `.env` file — the POSTGRES_PASSWORD
+   and other settings can safely be carried over since the database is still empty
+   at this point:
+   ```bash
+   # If you can reach the old server directly:
+   scp user@old-server:/opt/port-sight/.env /opt/port-sight/.env
+
+   # If you have a saved copy of the old .env:
+   # Upload it to /opt/port-sight/.env on the new server
+
+   # If you only have the key values, edit manually:
+   nano /opt/port-sight/.env
+   # Update CREDENTIAL_ENCRYPTION_KEY= and SECRET_KEY= to match the old server
+   ```
+
+3. **Start the stack** — use `up -d`, not `restart`:
+   ```bash
+   docker compose up -d
+   ```
+
+4. **Verify the key loaded into the container:**
+   ```bash
+   docker compose exec backend env | grep CREDENTIAL_ENCRYPTION_KEY
+   # Must match the old server's value exactly
+   ```
+
+5. **Restore HTTPS certificates** (if applicable):
+   ```bash
+   scp user@old-server:/opt/port-sight/certs/* /opt/port-sight/certs/
+   docker compose up -d
+   ```
+
+6. **Upload the database backup** via Admin > Backups > Restore from File.
+
+7. **Log in** with your original credentials. Run a manual poll on one switch
+   to confirm polling works before considering the DR complete.
+
+#### Symptom: polls fail with "Config error" after restore
+
+Work through this in order:
+
+1. Check what key the running container actually has:
+   ```bash
+   docker compose exec backend env | grep CREDENTIAL_ENCRYPTION_KEY
+   ```
+2. If it doesn't match the old server's key, the container wasn't recreated.
+   Force it:
+   ```bash
+   docker compose up -d --force-recreate backend
+   ```
+3. Re-check, then retry polling.
+
+#### If the original `.env` is lost
+
+Restore the backup anyway — all switch records, poll history, users, and settings
+come back correctly. Polling will fail because the SNMP passwords in the database
+are encrypted with a key you no longer have.
+
+To restore polling: go to Admin > Switch Management, edit each switch, and re-enter
+its SNMP credentials. They will be re-encrypted with the new key and polling resumes
+immediately. No other data is affected.
+
+#### Verifying a successful restore
+
+- [ ] Can log in with original credentials
+- [ ] Admin > Switch Management shows all switches
+- [ ] Manual poll on at least one switch completes without error
+- [ ] Admin > License shows the correct license or trial status
+- [ ] Admin > System shows the expected version and settings
 
 ### Backup retention
 
