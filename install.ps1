@@ -189,7 +189,7 @@ CREDENTIAL_ENCRYPTION_KEY=$FernetKey
 # ── Authentication ────────────────────────────────────────
 # How long a user stays logged in before needing to log in again.
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60
+ACCESS_TOKEN_EXPIRE_MINUTES=480
 
 # ── Display Options ───────────────────────────────────────
 # STRIP_SWITCH_DOMAIN: If your switches have names like "sw1.corp.com",
