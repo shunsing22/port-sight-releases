@@ -594,6 +594,49 @@ Then pull and restart.
 
 The database volume (`pgdata`) persists across restarts and rebuilds. Your data is safe unless you explicitly run `docker compose down -v` (which deletes volumes).
 
+### Beta releases
+
+Beta versions are pre-release builds available for early testing. They may contain new features that haven't been fully vetted. To opt in to the beta channel, set in `.env`:
+
+```bash
+PORT_SIGHT_VERSION=beta
+```
+
+Then pull and restart:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+To go back to stable:
+
+```bash
+# Remove or comment out the version override, or set to latest:
+PORT_SIGHT_VERSION=latest
+```
+
+Then pull and restart.
+
+Beta versions follow the format `X.Y.Z-beta.N` (e.g., `1.7.0-beta.1`). You can also pin to a specific beta version if needed:
+
+```bash
+PORT_SIGHT_VERSION=1.7.0-beta.2
+```
+
+**Important:** Beta releases are not recommended for production environments. Use them on test servers or non-critical deployments. Your data is safe — beta versions use the same database format as stable releases, and you can always roll back to a stable version.
+
+### Rolling back
+
+To revert to a previous stable version after testing a beta:
+
+```bash
+# Set the version to a known stable release or latest
+PORT_SIGHT_VERSION=latest
+docker compose pull
+docker compose up -d
+```
+
 ---
 
 ## Backup & Restore
