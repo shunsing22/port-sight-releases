@@ -13,16 +13,25 @@
 #
 #   ./maintenance.sh run [INSTALL_DIR]           # clean up now
 #   sudo ./maintenance.sh install-cron INSTALL_DIR   # daily job (Linux)
-#   sudo ./maintenance.sh remove-cron
+#   sudo ./maintenance.sh remove-cron [INSTALL_DIR]   # one install, or all
 #
 set -u
 
 REPO="ghcr.io/shunsing22/port-sight"
+# Pre-2.9.1 shared file; installs now get one file each, see cron_file_for().
 CRON_FILE="/etc/cron.d/port-sight-maintenance"
 BIN_PATH="/usr/local/sbin/port-sight-maintenance"
 LOG_FILE="/var/log/port-sight-maintenance.log"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+cron_file_for() {
+  # /opt/port-sight-beta -> /etc/cron.d/port-sight-maintenance-opt-port-sight-beta
+  # (cron.d names must be [A-Za-z0-9_-] only, or cron silently ignores the file).
+  local tag
+  tag=$(printf '%s' "$1" | sed 's#^/##; s#[^A-Za-z0-9_-]#-#g')
+  echo "/etc/cron.d/port-sight-maintenance-$tag"
+}
 
 run_cleanup() {
   local install_dir="${1:-$(pwd)}"
@@ -86,13 +95,16 @@ install_cron() {
   fi
   # Root runs a root-owned copy, never a script from a user-writable folder.
   install -m 0755 -o root -g root "$0" "$BIN_PATH"
-  cat > "$CRON_FILE" <<EOF
-# Port-Sight daily maintenance (installed by install.sh / update.sh).
+  local cron_file
+  cron_file=$(cron_file_for "$install_dir")
+  rm -f "$CRON_FILE"   # the pre-2.9.1 shared file
+  cat > "$cron_file" <<EOF
+# Port-Sight daily maintenance for $install_dir (installed by install.sh / update.sh).
 # Removes old Port-Sight image versions and defragments memory. Log: $LOG_FILE
 17 3 * * * root $BIN_PATH run "$install_dir" >> $LOG_FILE 2>&1
 EOF
-  chmod 0644 "$CRON_FILE"
-  echo "Daily maintenance installed: $CRON_FILE (03:17, log $LOG_FILE)"
+  chmod 0644 "$cron_file"
+  echo "Daily maintenance installed: $cron_file (03:17, log $LOG_FILE)"
 }
 
 remove_cron() {
@@ -100,13 +112,19 @@ remove_cron() {
     echo "remove-cron must run as root (sudo)" >&2
     return 1
   fi
-  rm -f "$CRON_FILE" "$BIN_PATH"
-  echo "Daily maintenance removed"
+  local install_dir="${1:-}"
+  if [ -n "$install_dir" ]; then
+    rm -f "$(cron_file_for "$install_dir")"
+    echo "Daily maintenance removed for $install_dir"
+  else
+    rm -f "$CRON_FILE" /etc/cron.d/port-sight-maintenance-* "$BIN_PATH"
+    echo "Daily maintenance removed (all installs)"
+  fi
 }
 
 case "${1:-run}" in
   run)          run_cleanup "${2:-}" ;;
   install-cron) install_cron "${2:-}" ;;
-  remove-cron)  remove_cron ;;
-  *) echo "usage: $0 {run [INSTALL_DIR]|install-cron INSTALL_DIR|remove-cron}" >&2; exit 2 ;;
+  remove-cron)  remove_cron "${2:-}" ;;
+  *) echo "usage: $0 {run [INSTALL_DIR]|install-cron INSTALL_DIR|remove-cron [INSTALL_DIR]}" >&2; exit 2 ;;
 esac

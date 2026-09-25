@@ -40,7 +40,7 @@ if [ -f maintenance.sh ]; then
       ./maintenance.sh install-cron "$INSTALL_DIR"
     elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
       sudo ./maintenance.sh install-cron "$INSTALL_DIR"
-    elif [ ! -f /etc/cron.d/port-sight-maintenance ]; then
+    elif ! ls /etc/cron.d/port-sight-maintenance* >/dev/null 2>&1; then
       echo ""
       echo "  To keep old image versions from filling the disk, install the daily job once:"
       echo "    sudo $INSTALL_DIR/maintenance.sh install-cron $INSTALL_DIR"

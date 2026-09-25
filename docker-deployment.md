@@ -599,7 +599,9 @@ docker compose pull && docker compose up -d && ./maintenance.sh run
 ### Daily maintenance job (Linux)
 
 The installer (and every `./update.sh`) also installs a daily cron job,
-`/etc/cron.d/port-sight-maintenance`, that runs the same cleanup at 03:17 and
+`/etc/cron.d/port-sight-maintenance-<install dir>` (one per install, so a
+production and a beta stack on one host each keep theirs), that runs the same
+cleanup at 03:17 and
 defragments the kernel's free memory so containers can always start (long
 uptimes plus large deletes can leave the kernel unable to hand Docker the
 contiguous memory a new container needs). It logs to
