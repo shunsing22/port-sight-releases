@@ -198,6 +198,23 @@ EOF
   echo ".env created with auto-generated secrets."
 fi
 
+# -- Updater and daily maintenance ---------------------------
+# update.sh = pull + restart + remove old image versions (every release left
+# behind by a plain "docker compose pull" stays on disk forever; a full disk
+# stops PostgreSQL). maintenance.sh runs that cleanup daily via cron on Linux.
+curl -fsSL "https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/update.sh" -o update.sh && chmod +x update.sh || true
+curl -fsSL "https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/maintenance.sh" -o maintenance.sh && chmod +x maintenance.sh || true
+if [ -f maintenance.sh ] && [ "$(uname -s)" = "Linux" ] && [ -d /etc/cron.d ]; then
+  if [ "$(id -u)" -eq 0 ]; then
+    ./maintenance.sh install-cron "$INSTALL_DIR" || true
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo ./maintenance.sh install-cron "$INSTALL_DIR" || true
+  else
+    echo "  (Optional, recommended) install the daily cleanup job once:"
+    echo "    sudo $INSTALL_DIR/maintenance.sh install-cron $INSTALL_DIR"
+  fi
+fi
+
 # ── Pull images and start ─────────────────────────────────
 echo ""
 echo "Pulling Docker images..."
@@ -219,7 +236,7 @@ echo "  Useful commands:"
 echo "    cd $INSTALL_DIR"
 echo "    docker compose logs -f        # View logs"
 echo "    docker compose down            # Stop"
-echo "    docker compose pull && docker compose up -d  # Update"
+echo "    ./update.sh                    # Update (pull, restart, remove old images)"
 echo ""
 echo "  For HTTPS, place your cert.pem and key.pem in:"
 echo "    $INSTALL_DIR/certs/"

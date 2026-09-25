@@ -235,7 +235,7 @@ POLL_SCHEDULE_MINUTE=0
   Write-Host "    cd $InstallDir"
   Write-Host "    docker compose logs -f                                # View logs"
   Write-Host "    docker compose down                                   # Stop"
-  Write-Host "    docker compose pull; docker compose up -d             # Update"
+  Write-Host "    .\update.ps1                                          # Update (pull, restart, remove old images)"
   Write-Host ""
   Write-Host "  For HTTPS, place your cert.pem and key.pem in:"
   Write-Host "    $InstallDir\certs\"

@@ -577,18 +577,43 @@ docker compose restart frontend
 ## Updating Port-Sight
 
 ```bash
-cd ~/port-sight              # or wherever you installed (Windows: cd $HOME\port-sight)
-docker compose pull          # download the latest images
-docker compose up -d         # restart with the new version
-docker image prune -af       # delete the previous versions' images
+cd ~/port-sight              # or wherever you installed
+./update.sh                  # Windows / Docker Desktop: .\update.ps1
 ```
 
-Run the prune every time. Docker keeps every version you have ever pulled
-(about 0.5 GB per Port-Sight release across the two images) until you remove
-them, and a full disk stops PostgreSQL cold - the database container goes
-`unhealthy` and the app stops with `dependency db failed to start`. The prune
-only removes images no running container is using; your data volumes are never
-touched. `docker system df` shows how much is reclaimable at any time.
+`update.sh` pulls the current images for your channel, restarts the stack,
+then removes the Port-Sight image versions that are no longer used. That last
+step matters: Docker keeps every version you have ever pulled (about 0.5 GB
+per release across the two images) until something removes it, and a full
+disk stops PostgreSQL cold - the database container goes `unhealthy` and the
+app stops with `dependency db failed to start`. Only Port-Sight's own unused
+images and untagged leftovers are removed; data volumes and other
+applications' images are never touched.
+
+The long form, if you prefer to run the steps yourself:
+
+```bash
+docker compose pull && docker compose up -d && ./maintenance.sh run
+```
+
+### Daily maintenance job (Linux)
+
+The installer (and every `./update.sh`) also installs a daily cron job,
+`/etc/cron.d/port-sight-maintenance`, that runs the same cleanup at 03:17 and
+defragments the kernel's free memory so containers can always start (long
+uptimes plus large deletes can leave the kernel unable to hand Docker the
+contiguous memory a new container needs). It logs to
+`/var/log/port-sight-maintenance.log`. Installing it needs root; if the
+installer could not (no sudo), do it once:
+
+```bash
+sudo ./maintenance.sh install-cron "$PWD"
+```
+
+`sudo ./maintenance.sh remove-cron` removes it. Docker Desktop on Windows and
+macOS has no cron; there, `update.ps1` / `update.sh` do the cleanup each time
+you update. `Admin > System` shows the disk free on the Docker host and the app
+warns admins when it drops under 10%.
 
 ### Pinning a version
 
