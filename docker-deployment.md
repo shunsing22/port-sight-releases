@@ -580,7 +580,15 @@ docker compose restart frontend
 cd ~/port-sight              # or wherever you installed (Windows: cd $HOME\port-sight)
 docker compose pull          # download the latest images
 docker compose up -d         # restart with the new version
+docker image prune -af       # delete the previous versions' images
 ```
+
+Run the prune every time. Docker keeps every version you have ever pulled
+(about 0.5 GB per Port-Sight release across the two images) until you remove
+them, and a full disk stops PostgreSQL cold - the database container goes
+`unhealthy` and the app stops with `dependency db failed to start`. The prune
+only removes images no running container is using; your data volumes are never
+touched. `docker system df` shows how much is reclaimable at any time.
 
 ### Pinning a version
 
