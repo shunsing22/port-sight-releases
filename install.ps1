@@ -72,6 +72,13 @@
   # ── Download docker-compose.prod.yml ───────────────────────
   Write-Host "Downloading docker-compose.prod.yml..."
   Invoke-WebRequest -Uri $ComposeUrl -OutFile "docker-compose.yml" -UseBasicParsing
+  # Updater (v2.9): pull + restart + remove old image versions. Best effort --
+  # an install still works without it; the Help page explains the manual steps.
+  try {
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/update.ps1" -OutFile "update.ps1" -UseBasicParsing
+  } catch {
+    Write-Host "  (could not download update.ps1; fetch it later from the releases repo)"
+  }
 
   # ── Generate .env if it doesn't exist ──────────────────────
   if (Test-Path ".env") {

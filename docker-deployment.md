@@ -59,7 +59,7 @@ docker compose up -d
 
 ```bash
 # Linux/macOS
-PORT_SIGHT_DIR=/opt/port-sight curl -fsSL https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/install.sh | PORT_SIGHT_DIR=/opt/port-sight bash
 
 # Windows (PowerShell)
 $env:PORT_SIGHT_DIR="C:\port-sight"; irm https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/install.ps1 | iex
@@ -395,7 +395,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 
 Port-Sight can automatically poll all your switches on a recurring schedule. These settings control the default daily poll time.
 
-**`POLL_SCHEDULE_HOUR`** and **`POLL_SCHEDULE_MINUTE`** — The time of day to run the automatic poll, in 24-hour format using the server's timezone. Default is `2:00 AM` (hour=2, minute=0). You can also configure more complex schedules (hourly, weekly, etc.) from the web UI after installation.
+**`POLL_SCHEDULE_HOUR`** and **`POLL_SCHEDULE_MINUTE`** — Legacy; no longer read. The poll schedule lives in the database and is set on **Admin > Network > Polling > Schedule** (daily at 02:00 server time on a fresh install; hourly, every N hours, daily or weekly are available). The variables stay in `.env` and the compose file for compatibility and can be ignored.
 
 ---
 
