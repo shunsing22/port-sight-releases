@@ -153,6 +153,28 @@ docker compose up -d
 # "up -d" has been seen to leave it on the old image after a pull.
 docker compose up -d --force-recreate frontend >/dev/null 2>&1 || true
 
+# -- Flow collector: clear stale kernel tracking for its UDP port ----------
+# Recreating the flow container gives it a new internal address, but a
+# NetFlow exporter that never stops sending keeps the kernel's existing
+# UDP tracking entry alive -- and that entry still points at the OLD
+# address, so flows silently stop until it is cleared (seen on every update
+# during the v2.13 beta). Flushing the entries for the port is harmless:
+# the next packet simply creates a fresh one.
+if grep -q 'port-sight/flow' docker-compose.yml 2>/dev/null; then
+  FLOW_PORT_VALUE="$(grep -E '^FLOW_PORT=' .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
+  if [ -z "$FLOW_PORT_VALUE" ]; then
+    if grep -q 'PORT_SIGHT_CHANNEL: beta' docker-compose.yml; then FLOW_PORT_VALUE=2056; else FLOW_PORT_VALUE=2055; fi
+  fi
+  if command -v conntrack >/dev/null 2>&1; then
+    if conntrack -D -p udp --dport "$FLOW_PORT_VALUE" >/dev/null 2>&1; then
+      echo "  Cleared kernel UDP tracking for the flow collector port ($FLOW_PORT_VALUE) so exporters reach the new container."
+    fi
+  else
+    echo "  Note: if NetFlow exporters are already sending, flows can stall after an update until the kernel's stale"
+    echo "  UDP tracking is cleared. Install the tool once (apt-get install -y conntrack) and future updates handle it."
+  fi
+fi
+
 # Refresh the maintenance script from the releases repo (falls back to the
 # copy already here), run the cleanup now, and make it a daily job.
 if curl -fsSL "$SCRIPTS_URL/maintenance.sh" -o maintenance.sh.new 2>/dev/null; then
