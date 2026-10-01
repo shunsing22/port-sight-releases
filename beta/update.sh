@@ -82,7 +82,7 @@ add_flow_collector() {
   flow_block+="    restart: unless-stopped\n"
   flow_block+="    ports:\n"
   flow_block+="      - \"\${FLOW_PORT:-$port_default}:2055/udp\"\n"
-  flow_block+="    mem_limit: 1g\n"
+  flow_block+="    mem_limit: 512m\n"
   flow_block+="    cpus: 1.0\n"
 
   awk \
@@ -145,15 +145,6 @@ add_flow_collector() {
   fi
 }
 add_flow_collector || true
-
-# v2.13.0-beta.11: the flow service's memory budget went from 512m to 1g
-# (a single unsampled campus core measured at 6k flows/s). An install whose
-# compose file was written by an earlier updater still says 512m -- raise it
-# in place, only inside the flow service block.
-if grep -q 'port-sight/flow' docker-compose.yml && sed -n '/^  flow:/,/^  [a-z]/p' docker-compose.yml | grep -q 'mem_limit: 512m'; then
-  sed -i '/^  flow:/,/^  [a-z]/ s/mem_limit: 512m/mem_limit: 1g/' docker-compose.yml
-  echo "  Raised the flow collector's memory limit from 512m to 1g in docker-compose.yml."
-fi
 
 echo "Updating Port-Sight in $INSTALL_DIR"
 docker compose pull

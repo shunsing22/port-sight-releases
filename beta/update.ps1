@@ -82,7 +82,7 @@ function Add-FlowCollector {
     "    restart: unless-stopped"
     "    ports:"
     "      - `"`${FLOW_PORT:-$portDefault}:2055/udp`""
-    "    mem_limit: 1g"
+    "    mem_limit: 512m"
     "    cpus: 1.0"
     ""
   )
@@ -138,17 +138,6 @@ function Add-FlowCollector {
   }
 }
 try { Add-FlowCollector } catch { Write-Host "  (could not update docker-compose.yml for the flow collector: $_)" }
-
-# v2.13.0-beta.11: raise an older flow service block's memory limit (512m -> 1g).
-try {
-  $lines = Get-Content "docker-compose.yml"
-  $inFlow = $false; $changed = $false
-  for ($i = 0; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -match '^  [A-Za-z_][A-Za-z0-9_]*:') { $inFlow = ($lines[$i] -eq "  flow:") }
-    if ($inFlow -and $lines[$i] -match '^\s+mem_limit: 512m\s*$') { $lines[$i] = $lines[$i] -replace '512m', '1g'; $changed = $true }
-  }
-  if ($changed) { Set-Content -Path "docker-compose.yml" -Value $lines -Encoding ascii; Write-Host "  Raised the flow collector's memory limit from 512m to 1g in docker-compose.yml." }
-} catch { }
 
 Write-Host "Updating Port-Sight in $PSScriptRoot"
 & docker compose pull
