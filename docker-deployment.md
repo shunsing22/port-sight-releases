@@ -6,15 +6,16 @@ Deploy Port-Sight on any platform that runs Docker: Linux (Ubuntu, RHEL, etc.), 
 
 ## How It Works
 
-Docker packages the application into isolated **containers**. Port-Sight uses three:
+Docker packages the application into isolated **containers**. Port-Sight uses four:
 
 | Container | What it runs | Internal port |
 |-----------|-------------|---------------|
 | **frontend** | Nginx serving the React UI + proxying API calls | 80 / 443 |
 | **backend** | Python FastAPI application server | 8000 |
 | **db** | PostgreSQL 16 database | 5432 |
+| **flow** | NetFlow/IPFIX/sFlow collector (v2.13) — decodes flow exports from your network gear in memory only; nothing it sees is ever written to disk or the database | 2055/udp (2055/2056 in the compose files — see below) |
 
-Users access the app on the port you choose (default: **80**). Nginx routes `/api/*` requests to the backend automatically. The backend and database are not directly exposed to the network.
+Users access the app on the port you choose (default: **80**). Nginx routes `/api/*` requests to the backend automatically. The backend, database and flow collector are not directly exposed to the network beyond the flow collector's own UDP listening port (see "Flow collector" below) — everything else only talks to the other containers.
 
 **HTTPS is automatic** — if certificate files are present in the `certs/` folder, HTTPS enables itself on the next restart. No config files to edit.
 
@@ -411,6 +412,20 @@ Then run `docker compose pull && docker compose up -d` to apply.
 
 ---
 
+#### Flow Collector
+
+**`FLOW_PORT`** — The UDP port the `flow` container (v2.13) listens on for NetFlow v5/v9, IPFIX and sFlow. Point your switches/routers/firewalls at this port on the Port-Sight host. Default **2055** on the production compose file, **2056** on the beta compose file (the two stacks share one host IP, so each exporter needs the host listed twice — once per port — if you run both side by side).
+
+```
+FLOW_PORT=2055
+```
+
+Open this port for inbound **UDP** from your exporters in your host/network firewall — nothing else needs to reach it. The container stores nothing on disk or in the database (aggregates a rolling 15-minute in-memory window only); if it's ever unreachable, the rest of Port-Sight keeps running normally and Admin > System > Health shows it as unreachable. See the admin guide's "Flow collector" chapter for per-platform exporter configuration. If an exporter shows up as a `172.x.x.1`-style address instead of the real device, see "Exporter shows as the Docker gateway" in that same chapter, or `docs/troubleshooting.md`.
+
+**Recommended: before you point exporters at this host.** On Linux, set `{"userland-proxy": false}` in `/etc/docker/daemon.json` and restart Docker *before* configuring any switch/router/firewall to send flows here — applying it after exporters are already streaming can leave a stale kernel conntrack entry that keeps delivering to the old path even once the setting is correct (the fix is a one-line `conntrack` flush, but it's simpler to never need it). `install.sh` prints a reminder about this during installation when the setting isn't already present; it never changes the setting for you. See the admin guide's "Exporter shows as the Docker gateway" subsection (section 14) for the full step-by-step, including the conntrack flush if you've already hit this.
+
+---
+
 ## Enabling HTTPS
 
 HTTPS activates automatically when certificate files are present. No config files to edit.
@@ -584,11 +599,40 @@ cd ~/port-sight              # or wherever you installed
 `update.sh` pulls the current images for your channel, restarts the stack,
 then removes the Port-Sight image versions that are no longer used. That last
 step matters: Docker keeps every version you have ever pulled (about 0.5 GB
-per release across the two images) until something removes it, and a full
+per release across the images) until something removes it, and a full
 disk stops PostgreSQL cold - the database container goes `unhealthy` and the
 app stops with `dependency db failed to start`. Only Port-Sight's own unused
 images and untagged leftovers are removed; data volumes and other
 applications' images are never touched.
+
+**v2.13: adding the flow collector to an existing install.** If your local
+`docker-compose.yml` doesn't have a `flow` service yet (any install from
+before v2.13), `update.sh`/`update.ps1` add it automatically, before pulling,
+so the new image is actually fetched. It backs up your current file first
+(`docker-compose.yml.bak-YYYYMMDD`), adds the `flow` service block (port 2055,
+or 2056 if your `docker-compose.yml` shows `PORT_SIGHT_CHANNEL: beta`), and
+adds `FLOW_URL: http://flow:8085` to the backend service's environment if it
+isn't already there. It prints one line saying what it added and reminds you
+that the flow collector's UDP port needs to be reachable from your NetFlow
+exporters (see "Flow Collector" above). Safe to run more than once — it
+only adds what's actually missing.
+
+**One-time step for installs made before v2.13.** The updater that adds
+the `flow` service is itself new, and the copy already in your install
+directory doesn't know to fetch it. Refresh it once by hand, then update as
+usual — from then on `update.sh` refreshes itself from your channel (stable
+installs from the releases root, beta installs from `beta/`) before it does
+anything else, so this never needs repeating:
+
+```bash
+# stable install
+curl -fsSL https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/update.sh -o update.sh && chmod +x update.sh && ./update.sh
+# beta install
+curl -fsSL https://raw.githubusercontent.com/shunsing22/port-sight-releases/main/beta/update.sh -o update.sh && chmod +x update.sh && ./update.sh
+```
+
+Windows: download `update.ps1` from the same location (`beta/update.ps1`
+for a beta install) over the existing file, then run `.\update.ps1`.
 
 The long form, if you prefer to run the steps yourself:
 

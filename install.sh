@@ -193,6 +193,12 @@ POLL_SCHEDULE_MINUTE=0
 # By default, Port-Sight uses the latest version. Uncomment and set
 # a version number to lock to a specific release.
 # PORT_SIGHT_VERSION=1.3.0
+
+# ── Flow collector ────────────────────────────────────────
+# FLOW_PORT: UDP port the flow collector listens on for NetFlow v5/v9,
+# IPFIX and sFlow. Point your exporters (cores, firewalls) at this port
+# on this server. Change it if 2055 is already taken.
+FLOW_PORT=2055
 EOF
 
   echo ".env created with auto-generated secrets."
@@ -212,6 +218,28 @@ if [ -f maintenance.sh ] && [ "$(uname -s)" = "Linux" ] && [ -d /etc/cron.d ]; t
   else
     echo "  (Optional, recommended) install the daily cleanup job once:"
     echo "    sudo $INSTALL_DIR/maintenance.sh install-cron $INSTALL_DIR"
+  fi
+fi
+
+# ── Flow collector: Docker userland-proxy notice (Linux only) ─────────────
+# Never changes the host's Docker daemon settings automatically -- an
+# installer must not silently touch a system-wide setting that restarts
+# every container on the host. Just tells the admin about it, once, before
+# exporters would start streaming to this host. See docs/docker-deployment.md
+# "Flow collector" and docs/new-admin-guide.md section 14.
+if [ "$(uname -s)" = "Linux" ]; then
+  if ! grep -q '"userland-proxy"[[:space:]]*:[[:space:]]*false' /etc/docker/daemon.json 2>/dev/null; then
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────────────────┐"
+    echo "  │ Flow collector note                                          │"
+    echo "  └──────────────────────────────────────────────────────────────┘"
+    echo "  To see your NetFlow exporters by their real addresses, Docker's"
+    echo "  userland proxy should be off BEFORE exporters send. Recommended"
+    echo "  on this host: add {\"userland-proxy\": false} to"
+    echo "  /etc/docker/daemon.json and restart Docker (every container on"
+    echo "  this host restarts once) — see docs/docker-deployment.md"
+    echo "  'Flow collector'. Skip this if you will not use NetFlow."
+    echo ""
   fi
 fi
 

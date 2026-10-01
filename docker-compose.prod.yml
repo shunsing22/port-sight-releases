@@ -30,6 +30,7 @@ services:
       STRIP_SWITCH_DOMAIN: ${STRIP_SWITCH_DOMAIN:-false}
       POLL_SCHEDULE_HOUR: ${POLL_SCHEDULE_HOUR:-2}
       POLL_SCHEDULE_MINUTE: ${POLL_SCHEDULE_MINUTE:-0}
+      FLOW_URL: http://flow:8085
     volumes:
       - backups:/app/backups
 
@@ -43,6 +44,19 @@ services:
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./certs:/etc/nginx/certs:ro
+
+  # NetFlow/IPFIX/sFlow collector (v2.13 WP N2) -- decodes flows in memory
+  # only, never writes to disk or the database. Not a `depends_on` of
+  # backend: the app must start and run normally when this container is
+  # absent or removed (existing installs before the updater adds it, or a
+  # customer who removes it).
+  flow:
+    image: ghcr.io/shunsing22/port-sight/flow:${PORT_SIGHT_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "${FLOW_PORT:-2055}:2055/udp"
+    mem_limit: 1g
+    cpus: 1.0
 
 volumes:
   pgdata:

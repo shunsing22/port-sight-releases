@@ -214,11 +214,26 @@ POLL_SCHEDULE_MINUTE=0
 # By default, Port-Sight uses the latest version. Uncomment and set
 # a version number to lock to a specific release.
 # PORT_SIGHT_VERSION=1.3.0
+
+# ── Flow collector ────────────────────────────────────────
+# FLOW_PORT: UDP port the flow collector listens on for NetFlow v5/v9,
+# IPFIX and sFlow. Point your exporters (cores, firewalls) at this port
+# on this server. Change it if 2055 is already taken.
+FLOW_PORT=2055
 "@
 
     $envContent | Out-File -FilePath ".env" -Encoding ascii -NoNewline
     Write-Host ".env created with auto-generated secrets."
   }
+
+  # ── Flow collector note ─────────────────────────────────
+  # Docker Desktop's networking stack differs from Linux Docker Engine (no
+  # /etc/docker/daemon.json userland-proxy setting applies the same way) --
+  # just point the admin at the guide rather than attempting a fix here.
+  Write-Host ""
+  Write-Host "  Note: if you plan to use the flow collector (NetFlow/IPFIX/sFlow), Docker"
+  Write-Host "  Desktop's networking differs from Linux Docker Engine -- see"
+  Write-Host "  docs/docker-deployment.md 'Flow collector' for exporter-address caveats."
 
   # ── Pull images and start ─────────────────────────────────
   Write-Host ""
