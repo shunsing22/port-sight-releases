@@ -162,6 +162,35 @@ docker compose up -d
 # "up -d" has been seen to leave it on the old image after a pull.
 docker compose up -d --force-recreate frontend >/dev/null 2>&1 || true
 
+# -- Flow collector: verify it actually started, heal the one failure seen --
+# On the owner's production update to v2.13.0 Docker created the flow
+# container WITHOUT attaching it to the compose network (no network, no
+# published port), so the backend could not reach it and exporters had
+# nowhere to send. A single --force-recreate fixed it. Check for exactly
+# that state and recreate once, then say plainly what the collector is doing.
+if grep -q 'port-sight/flow' docker-compose.yml 2>/dev/null; then
+  flow_container="$(docker compose ps -q flow 2>/dev/null | head -1)"
+  flow_ok=0
+  if [ -n "$flow_container" ]; then
+    nets="$(docker inspect "$flow_container" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)"
+    ports="$(docker inspect "$flow_container" --format '{{range $p,$v := .NetworkSettings.Ports}}{{$p}} {{end}}' 2>/dev/null)"
+    if [ -z "$nets" ] || ! echo "$ports" | grep -q '2055/udp'; then
+      echo "  Flow collector container started without its network or port; recreating it once."
+      docker compose up -d --force-recreate flow >/dev/null 2>&1 || true
+      flow_container="$(docker compose ps -q flow 2>/dev/null | head -1)"
+      nets="$(docker inspect "$flow_container" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)"
+      ports="$(docker inspect "$flow_container" --format '{{range $p,$v := .NetworkSettings.Ports}}{{$p}} {{end}}' 2>/dev/null)"
+    fi
+    if [ -n "$nets" ] && echo "$ports" | grep -q '2055/udp'; then flow_ok=1; fi
+  fi
+  if [ "$flow_ok" -eq 1 ]; then
+    echo "  Flow collector: running (network: $(echo "$nets" | awk '{print $1}'), UDP port published)."
+  else
+    echo "  WARNING: the flow collector container is not running correctly. Run 'docker compose up -d --force-recreate flow'"
+    echo "  and 'docker compose logs flow --tail 20'; see docs/troubleshooting.md 'Collector unreachable'."
+  fi
+fi
+
 # -- Flow collector: clear stale kernel tracking for its UDP port ----------
 # Recreating the flow container gives it a new internal address, but a
 # NetFlow exporter that never stops sending keeps the kernel's existing
