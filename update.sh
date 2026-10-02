@@ -82,8 +82,10 @@ add_flow_collector() {
   flow_block+="    restart: unless-stopped\n"
   flow_block+="    ports:\n"
   flow_block+="      - \"\${FLOW_PORT:-$port_default}:2055/udp\"\n"
-  flow_block+="    mem_limit: 1g\n"
-  flow_block+="    cpus: 1.0\n"
+  flow_block+="    environment:\n"
+  flow_block+="      PORT_SIGHT_VERSION: \${PORT_SIGHT_VERSION:-$tag_default}\n"
+  flow_block+="    mem_limit: \${FLOW_MEM_LIMIT:-2g}\n"
+  flow_block+="    cpus: \${FLOW_CPUS:-2.0}\n"
 
   awk \
     -v add_service="$need_service" \
@@ -146,13 +148,62 @@ add_flow_collector() {
 }
 add_flow_collector || true
 
-# v2.13.0-beta.11: the flow service's memory budget went from 512m to 1g
-# (a single unsampled campus core measured at 6k flows/s). An install whose
-# compose file was written by an earlier updater still says 512m -- raise it
-# in place, only inside the flow service block.
-if grep -q 'port-sight/flow' docker-compose.yml && sed -n '/^  flow:/,/^  [a-z]/p' docker-compose.yml | grep -q 'mem_limit: 512m'; then
-  sed -i '/^  flow:/,/^  [a-z]/ s/mem_limit: 512m/mem_limit: 1g/' docker-compose.yml
-  echo "  Raised the flow collector's memory limit from 512m to 1g in docker-compose.yml."
+# The flow service's resource budget has been raised twice as real exporter
+# loads came in: 512m -> 1g in v2.13.0-beta.11 (one unsampled campus core at
+# ~6k flows/s), then 1g/1.0 core -> 2g/2.0 in v2.13.13. The second raise
+# came from the owner's production box running a Catalyst 9606 plus two FTDs:
+# CPU pegged at 110% of the one-core cap, goflow2's output queue grew until
+# the container hit 1 GiB, and the kernel OOM-killed goflow2 ("exited
+# (code=-9)"), losing every NetFlow v9 template and restarting in a loop.
+# An install whose compose file was written by an earlier updater still
+# carries the old literals -- raise them in place, only inside the flow
+# service block, and only when they are still at a value WE wrote (an admin
+# who has tuned these by hand keeps their own values).
+if grep -q 'port-sight/flow' docker-compose.yml; then
+  flow_block_now="$(sed -n '/^  flow:/,/^  [a-z]/p' docker-compose.yml)"
+  if echo "$flow_block_now" | grep -q 'mem_limit: 512m'; then
+    sed -i '/^  flow:/,/^  [a-z]/ s/mem_limit: 512m/mem_limit: ${FLOW_MEM_LIMIT:-2g}/' docker-compose.yml
+    echo "  Raised the flow collector's memory limit from 512m to 2g in docker-compose.yml."
+  elif echo "$flow_block_now" | grep -q 'mem_limit: 1g'; then
+    sed -i '/^  flow:/,/^  [a-z]/ s/mem_limit: 1g/mem_limit: ${FLOW_MEM_LIMIT:-2g}/' docker-compose.yml
+    echo "  Raised the flow collector's memory limit from 1g to 2g in docker-compose.yml."
+  fi
+  if echo "$flow_block_now" | grep -q 'cpus: 1.0'; then
+    sed -i '/^  flow:/,/^  [a-z]/ s/cpus: 1\.0/cpus: ${FLOW_CPUS:-2.0}/' docker-compose.yml
+    echo "  Raised the flow collector's CPU limit from 1 core to 2 in docker-compose.yml."
+  fi
+fi
+
+# v2.13.13: the collector logs and reports its own version so a support
+# bundle says which build produced it (it used to log a hardcoded literal
+# that went stale the moment it shipped). It reads PORT_SIGHT_VERSION from
+# its environment and says "unknown" without it, so give an older install's
+# flow block that variable. Skipped entirely when the block already has an
+# `environment:` key of its own, so a hand-edited compose file is never
+# given a duplicate YAML key. Note the guard must anchor on the KEY lines:
+# the flow service's own `image:` line contains the string
+# PORT_SIGHT_VERSION as part of its tag and would otherwise always match.
+if grep -q 'port-sight/flow' docker-compose.yml \
+   && ! sed -n '/^  flow:/,/^  [a-z]/p' docker-compose.yml | grep -qE '^    environment:|^      PORT_SIGHT_VERSION:'; then
+  flow_tag_default="latest"
+  grep -q 'PORT_SIGHT_VERSION:-beta' docker-compose.yml && flow_tag_default="beta"
+  awk -v tag="$flow_tag_default" '
+    /^  [A-Za-z_][A-Za-z0-9_]*:/ { in_flow = ($0 == "  flow:") }
+    {
+      if (in_flow && !done && $0 ~ /^    (mem_limit|cpus):/) {
+        print "    environment:"
+        print "      PORT_SIGHT_VERSION: ${PORT_SIGHT_VERSION:-" tag "}"
+        done = 1
+      }
+      print
+    }
+  ' docker-compose.yml > docker-compose.yml.tmp-flowenv
+  if [ -s docker-compose.yml.tmp-flowenv ]; then
+    mv docker-compose.yml.tmp-flowenv docker-compose.yml
+    echo "  Told the flow collector its own version (PORT_SIGHT_VERSION) in docker-compose.yml."
+  else
+    rm -f docker-compose.yml.tmp-flowenv
+  fi
 fi
 
 echo "Updating Port-Sight in $INSTALL_DIR"

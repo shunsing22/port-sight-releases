@@ -55,8 +55,19 @@ services:
     restart: unless-stopped
     ports:
       - "${FLOW_PORT:-2055}:2055/udp"
-    mem_limit: 1g
-    cpus: 1.0
+    environment:
+      # Only so the collector can log and report its own version -- it has
+      # no other use for it. Reads "unknown" when unset.
+      PORT_SIGHT_VERSION: ${PORT_SIGHT_VERSION:-latest}
+    # v2.13.13: was 1g/1.0, which is demonstrably too small past a single
+    # busy exporter. On the owner's production box, a Catalyst 9606 plus two
+    # FTDs sat at 110% of the one-core cap; goflow2's output queue then grew
+    # until the container hit 1 GiB and the kernel OOM-killed goflow2
+    # (`exited (code=-9)`), losing every NetFlow v9 template and putting the
+    # collector into a restart loop. Override per install with FLOW_MEM_LIMIT
+    # / FLOW_CPUS in .env.
+    mem_limit: ${FLOW_MEM_LIMIT:-2g}
+    cpus: ${FLOW_CPUS:-2.0}
 
 volumes:
   pgdata:
