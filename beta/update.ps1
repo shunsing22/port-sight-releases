@@ -82,8 +82,10 @@ function Add-FlowCollector {
     "    restart: unless-stopped"
     "    ports:"
     "      - `"`${FLOW_PORT:-$portDefault}:2055/udp`""
-    "    mem_limit: 1g"
-    "    cpus: 1.0"
+    "    environment:"
+    "      PORT_SIGHT_VERSION: `${PORT_SIGHT_VERSION:-$tagDefault}"
+    "    mem_limit: `${FLOW_MEM_LIMIT:-2g}"
+    "    cpus: `${FLOW_CPUS:-2.0}"
     ""
   )
 
@@ -139,15 +141,59 @@ function Add-FlowCollector {
 }
 try { Add-FlowCollector } catch { Write-Host "  (could not update docker-compose.yml for the flow collector: $_)" }
 
-# v2.13.0-beta.11: raise an older flow service block's memory limit (512m -> 1g).
+# Raise an older flow service block's resource budget in place: 512m -> 1g
+# in v2.13.0-beta.11, then 1g -> 2g and one core -> two in v2.13.13 (see
+# update.sh's own comment for the production evidence -- goflow2 was being
+# OOM-killed with three exporters on a 1 GiB / 1-core cap). Only values WE
+# wrote are replaced, so an admin who has tuned these keeps their own.
 try {
   $lines = Get-Content "docker-compose.yml"
   $inFlow = $false; $changed = $false
   for ($i = 0; $i -lt $lines.Count; $i++) {
     if ($lines[$i] -match '^  [A-Za-z_][A-Za-z0-9_]*:') { $inFlow = ($lines[$i] -eq "  flow:") }
-    if ($inFlow -and $lines[$i] -match '^\s+mem_limit: 512m\s*$') { $lines[$i] = $lines[$i] -replace '512m', '1g'; $changed = $true }
+    if ($inFlow -and $lines[$i] -match '^\s+mem_limit: (512m|1g)\s*$') {
+      $lines[$i] = '    mem_limit: ${FLOW_MEM_LIMIT:-2g}'; $changed = $true
+    }
+    if ($inFlow -and $lines[$i] -match '^\s+cpus: 1\.0\s*$') {
+      $lines[$i] = '    cpus: ${FLOW_CPUS:-2.0}'; $changed = $true
+    }
   }
-  if ($changed) { Set-Content -Path "docker-compose.yml" -Value $lines -Encoding ascii; Write-Host "  Raised the flow collector's memory limit from 512m to 1g in docker-compose.yml." }
+  if ($changed) { Set-Content -Path "docker-compose.yml" -Value $lines -Encoding ascii; Write-Host "  Raised the flow collector's memory and CPU limits (2g / 2 cores) in docker-compose.yml." }
+} catch { }
+
+# v2.13.13: give an older install's flow block the PORT_SIGHT_VERSION
+# variable so the collector can log and report which build it is (it used to
+# log a hardcoded literal). See update.sh for the matching logic. Skipped
+# when the block already has an `environment:` key, so a hand-edited compose
+# file never gets a duplicate YAML key; the guard anchors on key lines
+# because the flow service's `image:` line contains PORT_SIGHT_VERSION as
+# part of its tag.
+try {
+  $raw = Get-Content "docker-compose.yml"
+  $inFlow = $false; $hasEnv = $false
+  foreach ($line in $raw) {
+    if ($line -match '^  [A-Za-z_][A-Za-z0-9_]*:') { $inFlow = ($line -eq "  flow:") }
+    if ($inFlow -and ($line -match '^    environment:' -or $line -match '^      PORT_SIGHT_VERSION:')) { $hasEnv = $true }
+  }
+  if ((Select-String -Path "docker-compose.yml" -Pattern 'port-sight/flow' -Quiet) -and (-not $hasEnv)) {
+    $tagDefaultEnv = "latest"
+    if (Select-String -Path "docker-compose.yml" -Pattern 'PORT_SIGHT_VERSION:-beta' -Quiet) { $tagDefaultEnv = "beta" }
+    $out = New-Object System.Collections.Generic.List[string]
+    $inFlow = $false; $inserted = $false
+    foreach ($line in $raw) {
+      if ($line -match '^  [A-Za-z_][A-Za-z0-9_]*:') { $inFlow = ($line -eq "  flow:") }
+      if ($inFlow -and (-not $inserted) -and ($line -match '^    (mem_limit|cpus):')) {
+        $out.Add("    environment:")
+        $out.Add('      PORT_SIGHT_VERSION: ${PORT_SIGHT_VERSION:-' + $tagDefaultEnv + '}')
+        $inserted = $true
+      }
+      $out.Add($line)
+    }
+    if ($inserted) {
+      Set-Content -Path "docker-compose.yml" -Value $out -Encoding ascii
+      Write-Host "  Told the flow collector its own version (PORT_SIGHT_VERSION) in docker-compose.yml."
+    }
+  }
 } catch { }
 
 Write-Host "Updating Port-Sight in $PSScriptRoot"

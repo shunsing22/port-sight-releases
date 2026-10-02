@@ -57,8 +57,12 @@ services:
     restart: unless-stopped
     ports:
       - "${FLOW_PORT:-2056}:2055/udp"
-    mem_limit: 1g
-    cpus: 1.0
+    environment:
+      PORT_SIGHT_VERSION: ${PORT_SIGHT_VERSION:-beta}
+    # See docker-compose.prod.yml's flow service for why these were raised
+    # from 1g/1.0 in v2.13.13.
+    mem_limit: ${FLOW_MEM_LIMIT:-2g}
+    cpus: ${FLOW_CPUS:-2.0}
 
 volumes:
   pgdata_beta:
