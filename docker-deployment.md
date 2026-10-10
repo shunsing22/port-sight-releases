@@ -449,7 +449,13 @@ This is the most common approach in corporate environments. Your organization li
 
 **Step 1 — Generate a private key and Certificate Signing Request (CSR):**
 
-A CSR is a file you send to your CA that says "I need a certificate for this server." The CA uses it to create your certificate.
+A CSR is a file you send to your CA that says "I need a certificate for this
+server." It contains the name you want certified and a public key; the matching
+private key is created at the same time and **never leaves your server**.
+
+Decide the name first: it must be exactly what users type in the browser address
+bar. `portsight.company.com` and `portsight` are different names, and a
+certificate for one is not valid for the other.
 
 ```bash
 # Linux / macOS — run from the port-sight install folder
@@ -457,7 +463,10 @@ mkdir -p certs
 openssl req -new -newkey rsa:2048 -nodes \
   -keyout certs/key.pem \
   -out certs/portsight.csr \
-  -subj "/CN=portsight.company.com"
+  -subj "/CN=portsight.company.com" \
+  -addext "subjectAltName=DNS:portsight.company.com"
+
+chmod 600 certs/key.pem
 ```
 
 ```powershell
@@ -466,18 +475,76 @@ mkdir certs -Force
 openssl req -new -newkey rsa:2048 -nodes `
   -keyout certs/key.pem `
   -out certs/portsight.csr `
-  -subj "/CN=portsight.company.com"
+  -subj "/CN=portsight.company.com" `
+  -addext "subjectAltName=DNS:portsight.company.com"
 ```
 
-Replace `portsight.company.com` with the actual hostname or domain name users will type in their browser. If users will access it by IP address, use the IP instead (e.g., `/CN=192.168.1.50`).
+**The `subjectAltName` is the part that matters.** Current browsers ignore the
+CN completely and check only the SAN list; a certificate whose SAN does not
+include the name being typed is rejected outright, with no way for the user to
+proceed in some browsers. Always include it, and always list the same name you
+put in the CN.
+
+**If users reach Port-Sight by more than one name** — a short hostname and an
+FQDN, say, or an old name during a migration — list them all, separated by
+commas, and keep the primary one in the CN:
+
+```
+  -addext "subjectAltName=DNS:portsight.company.com,DNS:portsight"
+```
+
+**If users reach it by IP address**, the SAN entry uses `IP:` rather than `DNS:`:
+
+```
+  -subj "/CN=192.168.1.50" \
+  -addext "subjectAltName=IP:192.168.1.50"
+```
+
+Note that public CAs will not issue a certificate for a private IP address at
+all — for an IP-only deployment you need an internal CA, or a self-signed
+certificate (Option B).
+
+**Some enterprise CAs want the full organisation detail** in the subject, and
+will reject a bare CN. If yours does, the fuller form is:
+
+```
+  -subj "/C=US/ST=California/O=Example Corporation/CN=portsight.company.com"
+```
+
+Most CAs override the country, state and organisation fields from their own
+records regardless of what you send, so the CN and SAN are the two that actually
+determine what you get back.
+
+> **`-addext` needs OpenSSL 1.1.1 or newer** (2018). If your `openssl version`
+> is older, the flag is silently unavailable and you will need a config file
+> instead — upgrade OpenSSL if you can, as the older releases are long
+> unsupported.
 
 This creates two files:
-- `certs/key.pem` — your private key (**keep this secret**, do not send it to anyone)
+- `certs/key.pem` — your private key (**keep this secret**, do not send it to anyone, and do not email it)
 - `certs/portsight.csr` — the CSR to send to your CA
+
+**Check the CSR before you send it**, because a missing SAN is only discovered
+weeks later when the certificate arrives and browsers refuse it:
+
+```bash
+openssl req -in certs/portsight.csr -noout -subject
+openssl req -in certs/portsight.csr -noout -text | grep -A1 "Subject Alternative Name"
+```
+
+The second command must print the names you expect. If it prints nothing, the
+`-addext` did not take — fix that before submitting.
 
 **Step 2 — Submit the CSR to your CA:**
 
-Send the `portsight.csr` file to your IT team or certificate authority. They will return a signed certificate file (often called `cert.pem`, `certificate.crt`, or similar).
+Send the `portsight.csr` file to your IT team or certificate authority. It is
+plain text and safe to paste into a ticket or a web portal (`cat certs/portsight.csr`)
+— it contains no secret. Send **only** the `.csr`; the `.pem` key stays on the
+server.
+
+They will return a signed certificate file (often called `cert.pem`,
+`certificate.crt`, or similar), usually along with one or more intermediate
+("chain") certificates.
 
 **Step 3 — Save the certificate:**
 
@@ -508,18 +575,30 @@ port-sight/
 A self-signed certificate encrypts traffic but browsers will show a security warning because it's not issued by a trusted CA. This is fine for internal tools or testing.
 
 ```bash
-# Linux / macOS
+# Linux / macOS — use the name users will actually type
 mkdir -p certs
 openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem \
-  -days 365 -nodes -subj "/CN=portsight"
+  -days 365 -nodes \
+  -subj "/CN=portsight.company.com" \
+  -addext "subjectAltName=DNS:portsight.company.com"
+
+chmod 600 certs/key.pem
 ```
 
 ```powershell
 # Windows (PowerShell) — requires OpenSSL installed, or use Git Bash
 mkdir certs -Force
 openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem `
-  -days 365 -nodes -subj "/CN=portsight"
+  -days 365 -nodes `
+  -subj "/CN=portsight.company.com" `
+  -addext "subjectAltName=DNS:portsight.company.com"
 ```
+
+Include the `subjectAltName` here too. Without it some browsers refuse the
+certificate outright rather than offering the usual "proceed anyway" option, so
+a self-signed certificate missing a SAN can lock you out of your own install.
+For access by IP address, use `-addext "subjectAltName=IP:192.168.1.50"` and the
+matching CN.
 
 > **Note:** Users will see a "Your connection is not private" warning in their browser. They can click through it (Advanced → Proceed), but this is only suitable for internal/testing use — not customer-facing deployments.
 
@@ -576,6 +655,353 @@ You'll see this in the logs:
 ```
 [entrypoint] SSL certificates found — enabling HTTPS (HTTP will redirect)
 ```
+
+### Renewing a certificate
+
+Certificates expire. Port-Sight does not warn you about it — nothing inside the
+application reads the certificate — so this is a calendar item you own.
+
+**An expired certificate is not an outage.** Port-Sight keeps running and keeps
+serving HTTPS; browsers show a "your connection is not private" warning that
+users can click through, and the API still answers. So renew promptly, but you
+are not working against a hard cut-off.
+
+**Nothing below replaces the certificate in service until step 7**, and step 7
+itself is reversible. The new key and certificate are written under new
+filenames, so the pair currently working keeps working while you do everything
+else.
+
+#### Step 0 — set these four values
+
+Every command in this section uses them, so you edit four lines here instead of
+substituting into thirty commands below. Paste this block with your own values:
+
+```bash
+APP=/opt/port-sight                 # where Port-Sight is installed
+FQDN=portsight.company.com          # the name users type in the browser
+PORT=443                            # the HTTPS port Port-Sight serves on
+INBOX=/tmp/cert-inbox               # scratch folder for the files the CA sends back
+```
+
+Check they took:
+
+```bash
+echo "$APP | $FQDN | $PORT | $INBOX"
+```
+
+**If you close the terminal or reconnect, run that block again** — shell
+variables do not survive a new session, and every later step depends on them.
+Every command below is written to be pasted as-is once these are set.
+
+#### Step 1 — generate a new key and CSR
+
+```bash
+mkdir -p "$APP/certs"
+cp -a "$APP/certs" "$APP/certs.bak-$(date +%F)"
+
+openssl req -new -newkey rsa:2048 -nodes -keyout "$APP/certs/key-new.pem" -out "$APP/certs/request.csr" -subj "/CN=$FQDN" -addext "subjectAltName=DNS:$FQDN"
+
+chmod 600 "$APP/certs/key-new.pem"
+```
+
+Most CAs overwrite country, state and organisation from their own records, so
+CN and SAN are the two fields that matter. If your CA requires the full subject,
+add it: `-subj "/C=US/ST=<state>/O=<organization>/CN=$FQDN"`.
+
+**The SAN is the field browsers actually read.** They ignore the CN entirely and
+reject a certificate whose SAN does not list the name being used. If users reach
+the server by more than one name, list them all:
+
+```bash
+-addext "subjectAltName=DNS:$FQDN,DNS:www.$FQDN"
+```
+
+Check before sending:
+
+```bash
+openssl req -in "$APP/certs/request.csr" -noout -subject
+openssl req -in "$APP/certs/request.csr" -noout -text | grep -A1 "Subject Alternative Name"
+```
+
+#### Step 2 — submit the CSR
+
+Send the contents of `$APP/certs/request.csr` to whoever issues your
+certificates — a portal, a ticket, an email:
+
+```bash
+cat "$APP/certs/request.csr"
+```
+
+It is plain text and safe to share: it holds your public key and your requested
+names, nothing secret. **The private key never leaves the server.**
+
+#### Step 3 — put the returned files somewhere the next steps can find them
+
+```bash
+mkdir -p "$INBOX"
+chmod 777 "$INBOX"
+```
+
+Now transfer whatever the CA sent into that folder. Any method works — SFTP,
+`scp`, or opening a file in an editor and pasting the text. Certificates are
+public data, so no secure channel is needed.
+
+`/tmp` is the default because **every account on the server can write to it**,
+which matters if you connect over SFTP as yourself and become root afterwards —
+you will not be able to write into the install directory as your own user. If
+you would rather use your home directory, change `INBOX` in step 0.
+
+Do not put private keys in `/tmp`; it is readable by every account on the host.
+The key stays where step 1 wrote it.
+
+Confirm the files arrived:
+
+```bash
+ls -l "$INBOX"
+```
+
+> **Do not `cat`, `more` or `less` these files to look at them.** Some are
+> binary (DER), and printing binary to a terminal can leave it in a state where
+> nothing renders. Step 4 reads them safely. If a terminal does go blank, type
+> `reset` and press Enter even though you cannot see it.
+
+#### Step 4 — identify what you were sent
+
+**What comes back varies by CA.** You may get one file or five; extensions may
+be `.pem`, `.crt`, `.cer` or `.txt`; the contents may be PEM text or DER binary,
+sometimes both in the same delivery; a pre-assembled chain file may or may not
+be included. **Do not go by the filenames** — a common trap is an intermediate
+certificate with the word "Root" in its name.
+
+This reads every file and reports only the ones that really are certificates:
+
+```bash
+cd "$INBOX" || echo "INBOX not set - re-run step 0"
+
+found=0
+for f in *; do
+  [ -f "$f" ] || continue
+  n=$(grep -c "BEGIN CERTIFICATE" "$f" 2>/dev/null)
+  if [ "${n:-0}" -gt 0 ]; then
+    found=1; echo "=== $f"; echo "    PEM, $n certificate(s):"
+    openssl crl2pkcs7 -nocrl -certfile "$f" | openssl pkcs7 -print_certs -noout
+  elif openssl x509 -in "$f" -inform DER -noout -subject >/dev/null 2>&1; then
+    found=1; echo "=== $f"; echo "    DER (binary), 1 certificate:"
+    openssl x509 -in "$f" -inform DER -noout -subject -issuer
+  fi
+done
+[ "$found" = 0 ] && echo "NO CERTIFICATES in $(pwd) - are the files somewhere else?"
+```
+
+Read the output as a chain. Every certificate names its own `subject` and the
+`issuer` that signed it, and that is what tells you the order:
+
+- **Your server certificate** is the one whose subject CN is your FQDN.
+- **The next link** is the certificate whose *subject* equals your server
+  certificate's *issuer*. Repeat: each certificate's issuer points at the
+  subject of the one above it.
+- **The root** is the certificate whose subject and issuer are *identical*
+  (self-signed). Leave it out — clients trust roots only from their own store,
+  never from the wire. Including it is harmless, just dead weight in every
+  handshake.
+- **A file holding several certificates** is a pre-assembled chain. If its first
+  certificate is your server certificate and the rest follow the order above,
+  use that one file in step 5 and ignore the others.
+
+There is no fixed number of intermediates — one or two is typical, more is
+possible. Follow the issuer/subject links until you reach the self-signed one.
+
+#### Step 5 — assemble the new certificate file
+
+It must be your server certificate **first**, then each intermediate in chain
+order. Order matters; many clients reject a chain that is out of order.
+
+**If one file already holds the chain, leaf first:**
+
+```bash
+cp "$INBOX/<that file>" "$APP/certs/cert-new.pem"
+```
+
+**Otherwise concatenate them yourself**, server certificate first:
+
+```bash
+cd "$INBOX"
+cat "<server-cert>" "<intermediate-1>" "<intermediate-2>" > "$APP/certs/cert-new.pem"
+```
+
+**If any of those were DER** (step 4 said so), convert before concatenating.
+`cat` on a binary file produces a `cert-new.pem` that nginx will refuse to load:
+
+```bash
+openssl x509 -in "<file>" -inform DER -outform PEM -out "<file>.pem"
+```
+
+> The `<angle brackets>` above are the only placeholders left in this section,
+> and they must be **replaced with real filenames**. Pasted as-is, the shell
+> reads `<` as a redirection and reports a syntax error.
+
+Check what you built:
+
+```bash
+echo "certificates in cert-new.pem: $(grep -c 'BEGIN CERTIFICATE' "$APP/certs/cert-new.pem")"
+```
+
+#### Step 6 — verify before installing
+
+**The pair check.** This proves the certificate the CA issued belongs to the key
+you generated in step 1 — the one failure that would take HTTPS down:
+
+```bash
+if c=$(openssl x509 -in "$APP/certs/cert-new.pem" -noout -modulus 2>/dev/null) &&
+   k=$(openssl rsa  -in "$APP/certs/key-new.pem"  -noout -modulus 2>/dev/null) &&
+   [ -n "$c" ] && [ "$c" = "$k" ]; then
+  echo "MATCH - certificate and key belong together"
+else
+  echo "NO MATCH - stop here, do not install"
+fi
+```
+
+`NO MATCH` means one of three things: the files are not where you think, the
+certificate was issued against a different CSR, or the key is damaged. All three
+are reasons to stop. Do not continue until this prints `MATCH`.
+
+**Names and dates:**
+
+```bash
+openssl x509 -in "$APP/certs/cert-new.pem" -noout -dates -ext subjectAltName
+```
+
+The SAN must list the name people actually type, and `notAfter` should be the
+lifetime you expect.
+
+**Chain trust** (informational):
+
+```bash
+openssl verify -untrusted "$APP/certs/cert-new.pem" "$APP/certs/cert-new.pem"
+```
+
+`OK` is good. This checks against your server's trust store, so a private or
+institutional CA can report `unable to get local issuer certificate` even when
+the chain is perfectly fine — step 8 is the authoritative check, so a failure
+here is not a reason to stop.
+
+#### Step 7 — install
+
+First find out how the container reads these files, because that decides the
+permissions:
+
+```bash
+cd "$APP"
+docker compose exec frontend id
+ls -l certs/cert.pem certs/key.pem
+```
+
+- `uid=0(root)` — root-owned `600` on the key is correct. Use the commands below
+  as written.
+- **Any other user** — match whatever the *current working files* show in that
+  `ls -l`. They are the proof of what this container can actually read.
+
+**Do not tighten permissions as part of a renewal.** If it goes wrong you will
+think the certificate is at fault. Make that a separate change on another day.
+
+```bash
+mv "$APP/certs/cert-new.pem" "$APP/certs/cert.pem"
+mv "$APP/certs/key-new.pem"  "$APP/certs/key.pem"
+chmod 644 "$APP/certs/cert.pem"
+chmod 600 "$APP/certs/key.pem"      # only if the container runs as root
+ls -l "$APP/certs/cert.pem" "$APP/certs/key.pem"
+```
+
+#### Step 8 — restart and verify from the socket
+
+```bash
+cd "$APP"
+docker compose restart frontend
+sleep 4
+
+echo "=== what is actually being served ==="
+echo | openssl s_client -connect "localhost:$PORT" -servername "$FQDN" 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+
+echo "=== the chain being served ==="
+echo | openssl s_client -connect "localhost:$PORT" -servername "$FQDN" 2>/dev/null | grep -E "^ *[0-9]+ s:|Verify return code"
+```
+
+Reading the live socket rather than the file is what catches "I replaced the
+file but the container is still serving the old one."
+
+You want the new `notAfter`, **one `s:` line for each certificate you put into
+`cert.pem`**, and `Verify return code: 0 (ok)`.
+
+If only one `s:` line appears when you expected more, the intermediates did not
+make it into the file — go back to step 5. A leaf-only chain still works in most
+browsers, because they quietly fetch the missing intermediate themselves, while
+`curl`, Java, Python, mobile apps and monitoring agents fail against it. That
+makes it a bug you can easily ship without noticing.
+
+#### Step 9 — check in a browser
+
+Load the site by name and **force a reload** (`Ctrl+Shift+R`, or a private
+window). Browsers cache TLS sessions and will happily show the old certificate
+after the server has moved on. This is by far the most common reason a correct
+renewal looks like it failed — check it before changing anything else.
+
+If it still shows the old certificate after a hard refresh, see
+[HTTPS not working](#https-not-working).
+
+#### Step 10 — clean up
+
+```bash
+rm -rf "$INBOX"
+```
+
+Keep `$APP/certs.bak-<date>` for a week or two in case something surfaces later,
+then delete it — it contains the old private key.
+
+#### Rolling back
+
+Step 1 took a copy. If anything is wrong you are two commands and a restart from
+the pair that was working:
+
+```bash
+ls -d "$APP"/certs.bak-*                      # find the backup
+BAK="$APP/certs.bak-YYYY-MM-DD"               # paste the one you want
+
+cp "$BAK/cert.pem" "$APP/certs/cert.pem"
+cp "$BAK/key.pem"  "$APP/certs/key.pem"
+cd "$APP" && docker compose restart frontend
+```
+
+That returns you to the expired-but-working certificate, which is a warning page
+rather than an outage.
+
+#### Plan for this getting more frequent
+
+Public certificate lifetimes are being stepped down industry-wide — roughly 200
+days from March 2026, 100 days from March 2027, and 47 days from March 2029.
+Twice a year by hand is tolerable; eight times a year is not, so it is worth
+asking your CA whether they support **ACME** (the protocol certbot and acme.sh
+speak). Commercial and higher-education CAs increasingly do; Sectigo-based
+services, including InCommon, require an External Account Binding key pair that
+your certificate administrator generates for you. Ask for those credentials
+before a renewal, not during one.
+
+**Nothing in Port-Sight changes if you automate it.** HTTPS is file-based: the
+host's `certs/` folder is mounted read-only into the frontend container and
+nginx reads `cert.pem` and `key.pem` from it. Any ACME client that can write
+those two files works. The whole integration is a deploy hook:
+
+```bash
+cp "/etc/letsencrypt/live/$FQDN/fullchain.pem" "$APP/certs/cert.pem"
+cp "/etc/letsencrypt/live/$FQDN/privkey.pem"   "$APP/certs/key.pem"
+cd "$APP" && docker compose restart frontend
+```
+
+The one decision that needs making is how the CA proves you own the name.
+**HTTP-01** needs the CA to reach the server on port 80 from the internet — awkward
+here, since Port-Sight already serves that port and an internal tool is often not
+reachable from outside. **DNS-01** proves it with a TXT record instead, needs no
+inbound reachability, and is usually the right answer for an internally-hosted
+server.
 
 ### Disabling HTTPS
 
@@ -960,6 +1386,13 @@ Then run `docker compose up -d` and update `CORS_ORIGINS` to match.
 
 ### HTTPS not working
 
+First check whether the certificate has simply expired (browsers say "not
+private" but the site still loads):
+```bash
+openssl x509 -in certs/cert.pem -noout -dates
+```
+See [Renewing a certificate](#renewing-a-certificate) if `notAfter` is in the past.
+
 Check that both cert files exist and are readable:
 ```bash
 ls -la certs/
@@ -969,6 +1402,42 @@ Check the frontend container logs for the entrypoint message:
 docker compose logs frontend | head -5
 ```
 You should see either `SSL certificates found` or `No SSL certificates found`.
+
+#### The browser still shows the old certificate after a renewal
+
+Work outwards from the container. First, what the server is actually serving:
+
+```bash
+echo | openssl s_client -connect localhost:443 -servername <fqdn> 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+```
+
+**If that shows the new certificate**, the server is done and the difference is
+further out:
+
+```bash
+ss -tlnp | grep ':443'                 # anything in front of the container on this host?
+getent hosts <fqdn>                    # where does the name actually point?
+hostname -I                            # is that this machine?
+echo | openssl s_client -connect <fqdn>:443 -servername <fqdn> 2>/dev/null | openssl x509 -noout -dates
+```
+
+- Connecting **by name** also shows the new certificate: the server is correct
+  and your **browser is caching**. Force a reload (`Ctrl+Shift+R`), use a
+  private window, or quit the browser completely. This is the usual answer.
+- The name resolves to an address that is **not** this host, or something other
+  than the container is listening on 443: a reverse proxy or load balancer is
+  terminating TLS, and the new certificate has to be installed **there** as
+  well.
+- The browser reports an **issuer you do not recognise** — not your CA: traffic
+  is being TLS-inspected by a firewall or proxy, which re-signs with its own CA
+  and may serve dates cached from before your renewal. Nothing to fix on the
+  server; the inspecting device refreshes on its own or its administrator
+  clears its cache.
+
+**If the socket shows the old certificate**, the container did not pick up the
+new files — confirm `cert.pem` really changed (`openssl x509 -in certs/cert.pem
+-noout -dates`) and restart the frontend again.
+
 
 ### Rebuilding from scratch
 
