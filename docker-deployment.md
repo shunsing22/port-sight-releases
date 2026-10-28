@@ -1355,6 +1355,21 @@ docker compose logs db         # check for PostgreSQL errors
 docker compose logs frontend   # check for nginx errors
 ```
 
+### Collecting logs when the app is down
+
+If the containers will not start, the app cannot produce its own support bundle. Use the host maintenance script instead; it needs only Docker, not a running Port-Sight:
+
+```bash
+./maintenance.sh collect-logs /opt/port-sight          # install directory (default: current directory)
+./maintenance.sh collect-logs /opt/port-sight --out /tmp/ps-logs.zip --lines 5000
+```
+
+It writes `port-sight-host-logs-<UTC time>.zip` (a `.tgz` on a host with neither `zip` nor Python) and prints its path as the last line. The archive contains `README.txt`, `manifest.json` (time, install directory, channel, image tag), `compose-ps.txt` (container status), `logs/<service>.log` (the last 2,000 lines of each container, or `--lines N`), `compose.yml`, `env-keys.txt`, and `host.txt` (disk, memory, Docker and Compose versions).
+
+What it does not contain: no `.env` values (only the setting names), and any compose-file line whose key contains password, secret, key or token has its value replaced by `<redacted>`. If a command fails, the error text is written into that member and the rest is still collected.
+
+Send the archive to support@port-sight.com.
+
 ### "Connection refused" or page won't load
 
 ```bash

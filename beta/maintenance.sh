@@ -14,6 +14,8 @@
 #   ./maintenance.sh run [INSTALL_DIR]           # clean up now
 #   sudo ./maintenance.sh install-cron INSTALL_DIR   # daily job (Linux)
 #   sudo ./maintenance.sh remove-cron [INSTALL_DIR]   # one install, or all
+#   ./maintenance.sh collect-logs [INSTALL_DIR] [--out FILE] [--lines N]
+#                                                # support zip when the app is down
 #
 set -u
 
@@ -122,9 +124,169 @@ remove_cron() {
   fi
 }
 
+# --- collect-logs -----------------------------------------------------------
+# A support zip from the host for when the app cannot produce its own bundle.
+# Best effort: a failing command writes its error text into that member.
+# Never copies .env values; compose file lines whose key looks secret are blanked.
+
+# Run a command in the install dir, capturing stdout+stderr into a file; on a
+# non-zero exit append a line saying so (the member then holds the error text).
+cl_capture() {
+  local dest="$1" dir="$2"; shift 2
+  local rc=0
+  mkdir -p "$(dirname "$dest")"
+  (cd "$dir" && "$@") > "$dest" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "[collect-logs] command failed (exit $rc): $*" >> "$dest"
+  fi
+  return 0
+}
+
+# Blank the VALUE of any "key: value" / "key=value" line whose key contains
+# password, secret, key or token (any case). The key itself is kept.
+cl_redact() {
+  sed -E 's/^([[:space:]]*(-[[:space:]]+)?[A-Za-z0-9_."'"'"'-]*([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn])[A-Za-z0-9_."'"'"'-]*[[:space:]]*[:=][[:space:]]*).+$/\1<redacted>/'
+}
+
+cl_json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+collect_logs() {
+  local install_dir="" out="" lines=2000
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --out)   out="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+      --lines) lines="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+      -*)      echo "collect-logs: unknown option $1" >&2; return 2 ;;
+      *)       install_dir="$1"; shift ;;
+    esac
+  done
+  case "$lines" in ''|*[!0-9]*) echo "collect-logs: --lines needs a number" >&2; return 2 ;; esac
+  [ -z "$install_dir" ] && install_dir="$(pwd)"
+  if [ ! -d "$install_dir" ]; then
+    echo "collect-logs: install dir not found: $install_dir" >&2
+    return 1
+  fi
+  install_dir=$(cd "$install_dir" && pwd)
+  local stamp
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  [ -z "$out" ] && out="$(pwd)/port-sight-host-logs-$stamp.zip"
+  case "$out" in /*|[A-Za-z]:*) ;; *) out="$(pwd)/$out" ;; esac
+
+  local stage
+  stage=$(mktemp -d 2>/dev/null || mktemp -d -t psl) || { echo "collect-logs: cannot make a temp dir" >&2; return 1; }
+  mkdir -p "$stage/logs" || return 1
+
+  cat > "$stage/README.txt" <<README_EOF
+Port-Sight host log collection
+Made by: maintenance.sh collect-logs  (UTC $stamp)
+Install dir: $install_dir
+
+This archive holds what the host knows about the Port-Sight stack: container
+status, the last $lines log lines of each container, the compose file with
+passwords/secrets/keys/tokens blanked, the NAMES (never the values) of the
+settings in .env, and disk, memory and Docker version figures.
+
+It contains no .env values and no passwords. Please send it to
+support@port-sight.com.
+README_EOF
+
+  # Channel and image tag (same rules update.sh uses).
+  local channel="stable" tag="latest" v c
+  if [ -f "$install_dir/.env" ]; then
+    v=$(grep -E '^PORT_SIGHT_VERSION=' "$install_dir/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]"'"'")
+    [ -n "$v" ] && tag="$v"
+    c=$(grep -E '^PORT_SIGHT_CHANNEL=' "$install_dir/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]"'"'")
+    if [ -n "$c" ]; then
+      channel="$c"
+    elif printf '%s' "$tag" | grep -q beta || grep -q 'PORT_SIGHT_CHANNEL: beta' "$install_dir/docker-compose.yml" 2>/dev/null; then
+      channel="beta"
+    fi
+  elif grep -q 'PORT_SIGHT_CHANNEL: beta' "$install_dir/docker-compose.yml" 2>/dev/null; then
+    channel="beta"
+  fi
+  printf '{"made_at": "%s", "tool": "maintenance.sh collect-logs", "install_dir": "%s", "channel": "%s", "image_tag": "%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(cl_json_escape "$install_dir")" "$(cl_json_escape "$channel")" "$(cl_json_escape "$tag")" \
+    > "$stage/manifest.json"
+
+  # Compose status and per-service logs.
+  cl_capture "$stage/compose-ps.txt" "$install_dir" docker compose ps -a
+  local svcs svc rc=0
+  svcs=$(cd "$install_dir" && docker compose config --services 2>"$stage/logs/_services-error.txt") || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$stage/logs/_services-error.txt"
+  else
+    echo "[collect-logs] could not list services (exit $rc)" >> "$stage/logs/_services-error.txt"
+    svcs=""
+  fi
+  for svc in $svcs; do
+    cl_capture "$stage/logs/$(printf '%s' "$svc" | tr -c 'A-Za-z0-9_.-' '_').log" "$install_dir" \
+      docker compose logs --no-color --tail "$lines" "$svc"
+  done
+
+  # Compose file(s), secrets blanked.
+  local f
+  : > "$stage/compose.yml"
+  for f in docker-compose.yml compose.yml docker-compose.override.yml; do
+    if [ -f "$install_dir/$f" ]; then
+      echo "# ---- $f ----" >> "$stage/compose.yml"
+      cl_redact < "$install_dir/$f" >> "$stage/compose.yml" 2>&1 || echo "# [collect-logs] could not read $f" >> "$stage/compose.yml"
+    fi
+  done
+  [ -s "$stage/compose.yml" ] || echo "# no compose file found in $install_dir" > "$stage/compose.yml"
+
+  # .env key names only.
+  if [ -f "$install_dir/.env" ]; then
+    grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' "$install_dir/.env" 2>/dev/null \
+      | sed -E 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*$/\1/' > "$stage/env-keys.txt"
+  else
+    echo "# no .env in $install_dir" > "$stage/env-keys.txt"
+  fi
+
+  # Host facts.
+  {
+    echo "## uname -a";            uname -a 2>&1
+    echo; echo "## df -h $install_dir"; df -h "$install_dir" 2>&1
+    echo; echo "## memory"
+    if command -v free >/dev/null 2>&1; then free -m 2>&1
+    elif command -v vm_stat >/dev/null 2>&1; then vm_stat 2>&1
+    else echo "free / vm_stat not available"; fi
+    echo; echo "## docker --version";  docker --version 2>&1
+    echo; echo "## docker compose version"; docker compose version 2>&1
+    echo; echo "## date -u"; date -u 2>&1
+  } > "$stage/host.txt" 2>&1
+
+  # Archive: zip, else python zipfile, else tar.gz.
+  mkdir -p "$(dirname "$out")" 2>/dev/null
+  local members="README.txt manifest.json compose-ps.txt compose.yml env-keys.txt host.txt logs" how="" py=""
+  rm -f "$out"
+  if command -v zip >/dev/null 2>&1 && (cd "$stage" && zip -qr -D "$out" $members) >/dev/null 2>&1; then
+    how="zip"
+  else
+    for py in python3 python; do
+      if command -v "$py" >/dev/null 2>&1 && (cd "$stage" && "$py" -m zipfile -c "$out" $members) >/dev/null 2>&1; then
+        how="python zipfile"; break
+      fi
+    done
+  fi
+  if [ -z "$how" ]; then
+    out="${out%.zip}.tgz"
+    if (cd "$stage" && tar -czf "$out" $members) >/dev/null 2>&1; then
+      how="tar (gzip)"
+    fi
+  fi
+  rm -rf "$stage"
+  if [ -z "$how" ] || [ ! -s "$out" ]; then
+    echo "collect-logs: could not write an archive" >&2
+    return 1
+  fi
+  echo "Archive made with: $how"
+  echo "$out"
+}
+
 case "${1:-run}" in
   run)          run_cleanup "${2:-}" ;;
   install-cron) install_cron "${2:-}" ;;
   remove-cron)  remove_cron "${2:-}" ;;
-  *) echo "usage: $0 {run [INSTALL_DIR]|install-cron INSTALL_DIR|remove-cron [INSTALL_DIR]}" >&2; exit 2 ;;
+  collect-logs) shift; collect_logs "$@" ;;
+  *) echo "usage: $0 {run [INSTALL_DIR]|install-cron INSTALL_DIR|remove-cron [INSTALL_DIR]|collect-logs [INSTALL_DIR] [--out FILE] [--lines N]}" >&2; exit 2 ;;
 esac
