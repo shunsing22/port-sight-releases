@@ -14,8 +14,8 @@
 #   ./maintenance.sh run [INSTALL_DIR]           # clean up now
 #   sudo ./maintenance.sh install-cron INSTALL_DIR   # daily job (Linux)
 #   sudo ./maintenance.sh remove-cron [INSTALL_DIR]   # one install, or all
-#   ./maintenance.sh collect-logs [INSTALL_DIR] [--out FILE] [--lines N]
-#                                                # support zip when the app is down
+#   ./maintenance.sh collect-logs [INSTALL_DIR] [--out FILE] [--lines N] [--send [--reply-to ADDR]]
+#                                                # ONE support zip (host + application); --send mails it
 #
 set -u
 
@@ -33,6 +33,17 @@ cron_file_for() {
   local tag
   tag=$(printf '%s' "$1" | sed 's#^/##; s#[^A-Za-z0-9_-]#-#g')
   echo "/etc/cron.d/port-sight-maintenance-$tag"
+}
+
+# True when the backend container of the stack in $1 is running.
+cl_backend_running() {
+  (cd "$1" && docker compose ps --status running --services 2>/dev/null) | tr -d '\r' | grep -qx backend
+}
+
+# Hand a file to the backend as the host facts its own support bundle carries.
+cl_push_host_facts() {
+  local dir="$1" file="$2"
+  (cd "$dir" && docker compose exec -T backend python -m app.support_cli host-facts --in -) < "$file" >/dev/null 2>&1
 }
 
 run_cleanup() {
@@ -73,6 +84,21 @@ run_cleanup() {
   # contiguous blocks a new container needs (root only; harmless, seconds).
   if [ -w /proc/sys/vm/compact_memory ]; then
     echo 1 > /proc/sys/vm/compact_memory 2>/dev/null && log "memory compacted"
+  fi
+
+  # Host facts for the application's own support bundle (a day old at most).
+  if [ -d "$install_dir" ] && cl_backend_running "$install_dir"; then
+    local hf
+    hf=$(mktemp 2>/dev/null || mktemp -t psf)
+    if [ -n "$hf" ]; then
+      cl_host_facts "$install_dir" > "$hf" 2>&1
+      if cl_push_host_facts "$install_dir" "$hf"; then
+        log "host facts pushed to the backend"
+      else
+        log "host facts could not be pushed to the backend"
+      fi
+      rm -f "$hf"
+    fi
   fi
 
   # Report where Docker keeps its data and how full that disk is.
@@ -150,11 +176,62 @@ cl_redact() {
 
 cl_json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
+# Host facts: network, clock, memory, Docker figures on stdout. Used by collect-logs
+# (host.txt) and by the daily run, which pushes them to the backend so the
+# bundle made from the browser carries them too.
+cl_host_facts() {
+  local install_dir="$1"
+  {
+    echo "## uname -a";            uname -a 2>&1
+    echo; echo "## df -h $install_dir"; df -h "$install_dir" 2>&1
+    echo; echo "## memory"
+    if command -v free >/dev/null 2>&1; then free -m 2>&1
+    elif command -v vm_stat >/dev/null 2>&1; then vm_stat 2>&1
+    else echo "free / vm_stat not available"; fi
+    echo; echo "## docker --version";  docker --version 2>&1
+    echo; echo "## docker compose version"; docker compose version 2>&1
+    echo; echo "## date -u"; date -u 2>&1
+    echo; echo "## hypervisor"
+    if command -v systemd-detect-virt >/dev/null 2>&1; then systemd-detect-virt 2>&1; else echo "systemd-detect-virt not available"; fi
+    echo; echo "## ip -br address"
+    if command -v ip >/dev/null 2>&1; then ip -br address 2>&1; else echo "ip not available"; fi
+    echo; echo "## ip route"
+    if command -v ip >/dev/null 2>&1; then ip route show 2>&1; else echo "ip not available"; fi
+    echo; echo "## gateway neighbours"
+    if command -v ip >/dev/null 2>&1; then
+      cl_gw=$(ip route show 2>/dev/null | awk '$1=="default"{v="";d="";for(i=1;i<NF;i++){if($i=="via")v=$(i+1);if($i=="dev")d=$(i+1)}if(v!=""&&d!="")print v" "d}')
+      if [ -n "$cl_gw" ]; then
+        # `ip neigh show GW dev DEV` prints "GW lladdr MAC STATE" or "GW STATE" and
+        # omits the dev; emit one canonical line "GW dev DEV [lladdr MAC] STATE" per
+        # default route so the reader never depends on ip's output shape.
+        echo "$cl_gw" | while read -r gw dev; do
+          nb=$(ip neigh show "$gw" dev "$dev" 2>/dev/null | head -1)
+          if [ -n "$nb" ]; then echo "$gw dev $dev ${nb#"$gw" }"; else echo "$gw dev $dev missing"; fi
+        done
+      else echo "none"; fi
+    else echo "ip not available"; fi
+    echo; echo "## clocksource"
+    if [ -r /sys/devices/system/clocksource/clocksource0/current_clocksource ]; then
+      cat /sys/devices/system/clocksource/clocksource0/current_clocksource 2>&1
+      echo "available: $(cat /sys/devices/system/clocksource/clocksource0/available_clocksource 2>&1)"
+    else echo "clocksource not available"; fi
+    echo; echo "## time sync"
+    if command -v timedatectl >/dev/null 2>&1; then timedatectl 2>&1; else echo "timedatectl not available"; fi
+    if command -v chronyc >/dev/null 2>&1; then chronyc tracking 2>&1; fi
+    echo; echo "## ip_forward"
+    if command -v sysctl >/dev/null 2>&1; then sysctl -n net.ipv4.ip_forward 2>&1; else echo "sysctl not available"; fi
+    echo; echo "## docker nat"
+    if command -v iptables >/dev/null 2>&1; then echo "rules: $(iptables -t nat -S DOCKER 2>&1 | wc -l | tr -d '[:space:]')"; else echo "iptables not available"; fi
+  } 2>&1
+}
+
 collect_logs() {
-  local install_dir="" out="" lines=2000
+  local install_dir="" out="" lines=2000 out_given=0 send=0 reply_to=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --out)   out="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+      --out)   out="${2:-}"; out_given=1; shift; [ $# -gt 0 ] && shift ;;
+      --send)  send=1; shift ;;
+      --reply-to) reply_to="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
       --lines) lines="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
       -*)      echo "collect-logs: unknown option $1" >&2; return 2 ;;
       *)       install_dir="$1"; shift ;;
@@ -184,10 +261,12 @@ Install dir: $install_dir
 This archive holds what the host knows about the Port-Sight stack: container
 status, the last $lines log lines of each container, the compose file with
 passwords/secrets/keys/tokens blanked, the NAMES (never the values) of the
-settings in .env, and disk, memory and Docker version figures.
+settings in .env, and disk, memory and Docker version figures, plus
+network interfaces, routes, gateway reachability, clock source and time sync.
 
-It contains no .env values and no passwords. Please send it to
-support@port-sight.com.
+It contains no .env values and no passwords. When the application is running
+the archive also holds its own support bundle (host files under host/).
+Please send it to support@port-sight.com.
 README_EOF
 
   # Channel and image tag (same rules update.sh uses).
@@ -242,18 +321,7 @@ README_EOF
     echo "# no .env in $install_dir" > "$stage/env-keys.txt"
   fi
 
-  # Host facts.
-  {
-    echo "## uname -a";            uname -a 2>&1
-    echo; echo "## df -h $install_dir"; df -h "$install_dir" 2>&1
-    echo; echo "## memory"
-    if command -v free >/dev/null 2>&1; then free -m 2>&1
-    elif command -v vm_stat >/dev/null 2>&1; then vm_stat 2>&1
-    else echo "free / vm_stat not available"; fi
-    echo; echo "## docker --version";  docker --version 2>&1
-    echo; echo "## docker compose version"; docker compose version 2>&1
-    echo; echo "## date -u"; date -u 2>&1
-  } > "$stage/host.txt" 2>&1
+  cl_host_facts "$install_dir" > "$stage/host.txt" 2>&1
 
   # Archive: zip, else python zipfile, else tar.gz.
   mkdir -p "$(dirname "$out")" 2>/dev/null
@@ -274,12 +342,70 @@ README_EOF
       how="tar (gzip)"
     fi
   fi
-  rm -rf "$stage"
   if [ -z "$how" ] || [ ! -s "$out" ]; then
+    rm -rf "$stage"
     echo "collect-logs: could not write an archive" >&2
     return 1
   fi
+
+  # One archive: with the backend running, add its own support bundle.
+  local backend_up=0 combine_note=""
+  if cl_backend_running "$install_dir"; then
+    backend_up=1
+    cl_push_host_facts "$install_dir" "$stage/host.txt" || log "host facts could not be pushed to the backend" >&2
+    if [ "$how" = "tar (gzip)" ]; then
+      combine_note="the archive is not a zip"
+    elif (cd "$install_dir" && docker compose exec -T backend python -m app.support_cli combine --host-zip - --out -)         < "$out" > "$out.combined" 2> "$stage/combine.err" && [ -s "$out.combined" ]; then
+      mv "$out.combined" "$out"
+      if [ "$out_given" -eq 0 ]; then
+        mv "$out" "$(dirname "$out")/port-sight-support-$stamp.zip" && out="$(dirname "$out")/port-sight-support-$stamp.zip"
+      fi
+      combine_note="ok"
+    else
+      combine_note=$(tail -n 1 "$stage/combine.err" 2>/dev/null | tr -d '\r')
+      [ -n "$combine_note" ] || combine_note="the backend returned nothing"
+      rm -f "$out.combined"
+    fi
+  else
+    combine_note="the application is not running"
+  fi
+  rm -rf "$stage"
   echo "Archive made with: $how"
+  if [ "$combine_note" = "ok" ]; then
+    echo "Archive: host facts + application bundle"
+  else
+    echo "Archive: host facts only (the application could not add its bundle: $combine_note)"
+  fi
+
+  local sent_ok=0
+  if [ "$send" -eq 1 ]; then
+    local result="" copy="" reason=""
+    if [ "$backend_up" -eq 0 ]; then
+      reason="the application is not running"
+    else
+      if [ -n "$reply_to" ]; then
+        result=$(cd "$install_dir" && docker compose exec -T backend python -m app.support_cli send --zip - --reply-to "$reply_to" < "$out" 2>/dev/null | tr -d '\r' | tail -n 1)
+      else
+        result=$(cd "$install_dir" && docker compose exec -T backend python -m app.support_cli send --zip - < "$out" 2>/dev/null | tr -d '\r' | tail -n 1)
+      fi
+      if printf '%s' "$result" | grep -q '"sent": *true'; then
+        sent_ok=1
+        copy=$(printf '%s' "$result" | grep -o '[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]*' | sed -n '2p')
+      else
+        reason=$(printf '%s' "$result" | sed -n 's/.*"reason": *"\(.*\)"}.*/\1/p')
+        [ -n "$reason" ] || reason="the application gave no answer"
+      fi
+    fi
+    if [ "$sent_ok" -eq 1 ]; then
+      if [ -n "$copy" ]; then echo "Sent to support@port-sight.com (copy to $copy)."; else echo "Sent to support@port-sight.com."; fi
+    else
+      echo "Not sent: $reason."
+    fi
+  fi
+  if [ "$backend_up" -eq 0 ] || { [ "$send" -eq 1 ] && [ "$sent_ok" -eq 0 ]; }; then
+    echo "Copy the archive to your computer and email it to support@port-sight.com:"
+    echo "  scp $(id -un 2>/dev/null || echo "$USER")@$(hostname):$out ."
+  fi
   echo "$out"
 }
 
@@ -288,5 +414,5 @@ case "${1:-run}" in
   install-cron) install_cron "${2:-}" ;;
   remove-cron)  remove_cron "${2:-}" ;;
   collect-logs) shift; collect_logs "$@" ;;
-  *) echo "usage: $0 {run [INSTALL_DIR]|install-cron INSTALL_DIR|remove-cron [INSTALL_DIR]|collect-logs [INSTALL_DIR] [--out FILE] [--lines N]}" >&2; exit 2 ;;
+  *) echo "usage: $0 {run [INSTALL_DIR]|install-cron INSTALL_DIR|remove-cron [INSTALL_DIR]|collect-logs [INSTALL_DIR] [--out FILE] [--lines N] [--send [--reply-to ADDR]]}" >&2; exit 2 ;;
 esac

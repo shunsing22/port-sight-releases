@@ -1015,6 +1015,50 @@ docker compose restart frontend
 
 ---
 
+## Server time
+
+Port-Sight stamps every poll, link event, availability sample and outage with the server's clock. A wrong server clock produces no error; it
+produces wrong times everywhere, and trends and availability figures that do not line up with switch logs. Two things keep it right.
+
+### Use a stable clock source on a virtual machine
+
+On Hyper-V, Linux should run on the hypervisor's paravirtual clock, not on the CPU timestamp counter, which Hyper-V does not keep stable across
+virtual CPUs. A VM migrated from VMware usually comes up on `tsc`. Check and switch:
+
+```bash
+cat /sys/devices/system/clocksource/clocksource0/current_clocksource      # tsc = wrong on Hyper-V
+cat /sys/devices/system/clocksource/clocksource0/available_clocksource    # hyperv_clocksource_tsc_page should be listed
+echo hyperv_clocksource_tsc_page | sudo tee /sys/devices/system/clocksource/clocksource0/current_clocksource
+```
+
+Pin it for every boot by adding `clocksource=hyperv_clocksource_tsc_page` to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`, then
+`sudo update-grub`. On VMware and KVM the default (`tsc` or `kvm-clock`) is correct and needs no change.
+
+### Keep the clock synchronized
+
+`timedatectl` must say `System clock synchronized: yes`. If it says `no` or `NTP service: n/a`, install chrony:
+
+```bash
+sudo apt-get install -y chrony          # Ubuntu / Debian; dnf install chrony on RHEL-family
+sleep 15 && chronyc tracking            # "System time" within a few milliseconds of NTP time
+```
+
+By default chrony follows public pool servers, which is fine. Better is the NTP source your switches already use, so Port-Sight's timestamps and
+the switch logs agree to the millisecond. `show ntp associations` on a Cisco switch lists it (the entries marked `*` or `+`). Then:
+
+```bash
+echo 'server 192.0.2.10 iburst prefer' | sudo tee /etc/chrony/sources.d/campus.sources   # your NTP server's address
+sudo systemctl restart chrony
+sleep 15 && chronyc sources             # ^* on that line means chrony follows it
+```
+
+A line that stays at `^?` is a server that does not answer NTP from this subnet; remove the file again and stay on the pool.
+
+The Port-Sight UI compares the server's clock with your computer's on every version check and shows administrators a banner when they differ by
+more than a minute, with these steps. The host log collection records the clock source and sync state, and the diagnosis names both conditions.
+
+---
+
 ## Updating Port-Sight
 
 ```bash
@@ -1074,7 +1118,10 @@ production and a beta stack on one host each keep theirs), that runs the same
 cleanup at 03:17 and
 defragments the kernel's free memory so containers can always start (long
 uptimes plus large deletes can leave the kernel unable to hand Docker the
-contiguous memory a new container needs). It logs to
+contiguous memory a new container needs). Since v2.18.9 it also hands the
+host's network, route, gateway, clock-source and time-sync facts to the
+backend, so a support bundle made from the web UI carries the host's state
+as of the last run (the bundle says how old it is). It logs to
 `/var/log/port-sight-maintenance.log`. Installing it needs root; if the
 installer could not (no sudo), do it once:
 
@@ -1355,20 +1402,24 @@ docker compose logs db         # check for PostgreSQL errors
 docker compose logs frontend   # check for nginx errors
 ```
 
-### Collecting logs when the app is down
+### Collecting a support archive from the command line
 
-If the containers will not start, the app cannot produce its own support bundle. Use the host maintenance script instead; it needs only Docker, not a running Port-Sight:
+When the web UI is unreachable (the containers will not start, or the server answers SSH but not the browser), make the support archive over SSH from the install folder. It needs only Docker, not a reachable Port-Sight:
 
 ```bash
-./maintenance.sh collect-logs /opt/port-sight          # install directory (default: current directory)
-./maintenance.sh collect-logs /opt/port-sight --out /tmp/ps-logs.zip --lines 5000
+./maintenance.sh collect-logs                                # writes the archive and prints its path
+./maintenance.sh collect-logs --send                         # ...and emails it to support through the app's SMTP settings
+./maintenance.sh collect-logs --send --reply-to you@example.com
+./maintenance.sh collect-logs /opt/port-sight --out /tmp/ps.zip --lines 5000
 ```
 
-It writes `port-sight-host-logs-<UTC time>.zip` (a `.tgz` on a host with neither `zip` nor Python) and prints its path as the last line. The archive contains `README.txt`, `manifest.json` (time, install directory, channel, image tag), `compose-ps.txt` (container status), `logs/<service>.log` (the last 2,000 lines of each container, or `--lines N`), `compose.yml`, `env-keys.txt`, and `host.txt` (disk, memory, Docker and Compose versions).
+**What you get.** One archive. The script first collects what the host knows: `compose-ps.txt` (container status), `logs/<service>.log` (the last 2,000 lines of each container, or `--lines N`), `compose.yml` with secrets blanked, `env-keys.txt` (setting names only), and `host.txt` (disk, memory, Docker and Compose versions, hypervisor, network interfaces, routes, gateway reachability per default route, clock source, time sync state, IP forwarding and whether Docker's NAT rules are present). If the backend container is running, the script then asks it to add the application's own bundle (version, health, settings without secrets, recent polls, switches, collector and scheduler state, the diagnosis findings, the backend log) and saves the result as `port-sight-support-<UTC time>.zip`. If the backend is not running you get the host part alone, named `port-sight-host-logs-<UTC time>.zip`, and the script says so.
 
-What it does not contain: no `.env` values (only the setting names), and any compose-file line whose key contains password, secret, key or token has its value replaced by `<redacted>`. If a command fails, the error text is written into that member and the rest is still collected.
+**Sending it.** With `--send`, the backend emails the archive to support@port-sight.com through the SMTP settings configured under Settings > Email, with a copy to `--reply-to` or, failing that, to the first administrator who has an email address. The mail body carries the diagnosis findings, so support reads the likely cause before opening the zip. The script prints `Sent to ...` or `Not sent: <reason>`. Whenever it cannot send, and whenever the backend is down, it prints the manual path: copy the file to your computer with `scp` and email it to support@port-sight.com yourself.
 
-Send the archive to support@port-sight.com.
+**What it never contains:** `.env` values (only the setting names), passwords, SNMP credentials, API keys or tokens. Any compose-file line whose key contains password, secret, key or token has its value replaced by `<redacted>`, and the application's redactor runs over everything it adds. If a command fails or a tool is not installed, that is written into the member and the rest is still collected.
+
+Support runs the same diagnosis rules the in-app assistant uses over the archive, so conditions such as one address on two interfaces, a default route whose gateway does not answer, an unstable clock source or an unsynchronized clock are named directly (see the troubleshooting guide, "Reachable by SSH and ping, not by browser").
 
 ### "Connection refused" or page won't load
 
