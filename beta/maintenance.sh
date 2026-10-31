@@ -101,6 +101,21 @@ run_cleanup() {
     fi
   fi
 
+  # Support archives left in the install folder by collect-logs: 14 days, nothing else.
+  if [ -d "$install_dir" ]; then
+    local old_archives
+    old_archives=$(find "$install_dir" -maxdepth 1 -type f \( -name 'port-sight-support-*.zip' -o -name 'port-sight-host-logs-*.zip' -o -name 'port-sight-host-logs-*.tgz' \) -mtime +14 2>/dev/null)
+    if [ -n "$old_archives" ]; then
+      local n_old=0 f
+      while IFS= read -r f; do
+        [ -n "$f" ] && rm -f -- "$f" && n_old=$((n_old + 1))
+      done <<OLD_EOF
+$old_archives
+OLD_EOF
+      log "removed $n_old support archive(s) older than 14 days"
+    fi
+  fi
+
   # Report where Docker keeps its data and how full that disk is.
   local root
   root=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
@@ -349,7 +364,7 @@ README_EOF
   fi
 
   # One archive: with the backend running, add its own support bundle.
-  local backend_up=0 combine_note=""
+  local backend_up=0 combine_note="" archive_id=""
   if cl_backend_running "$install_dir"; then
     backend_up=1
     cl_push_host_facts "$install_dir" "$stage/host.txt" || log "host facts could not be pushed to the backend" >&2
@@ -357,6 +372,7 @@ README_EOF
       combine_note="the archive is not a zip"
     elif (cd "$install_dir" && docker compose exec -T backend python -m app.support_cli combine --host-zip - --out -)         < "$out" > "$out.combined" 2> "$stage/combine.err" && [ -s "$out.combined" ]; then
       mv "$out.combined" "$out"
+      archive_id=$(sed -n 's/^stored: *//p' "$stage/combine.err" 2>/dev/null | tr -d '\r' | tail -n 1)
       if [ "$out_given" -eq 0 ]; then
         mv "$out" "$(dirname "$out")/port-sight-support-$stamp.zip" && out="$(dirname "$out")/port-sight-support-$stamp.zip"
       fi
@@ -373,6 +389,9 @@ README_EOF
   echo "Archive made with: $how"
   if [ "$combine_note" = "ok" ]; then
     echo "Archive: host facts + application bundle"
+    if [ -n "$archive_id" ]; then
+      echo "Also saved in Port-Sight: Admin > System > Support archives (download, send or delete it there)."
+    fi
   else
     echo "Archive: host facts only (the application could not add its bundle: $combine_note)"
   fi
@@ -383,10 +402,12 @@ README_EOF
     if [ "$backend_up" -eq 0 ]; then
       reason="the application is not running"
     else
+      local send_args=""
+      [ -n "$archive_id" ] && send_args="--archive-id $archive_id"
       if [ -n "$reply_to" ]; then
-        result=$(cd "$install_dir" && docker compose exec -T backend python -m app.support_cli send --zip - --reply-to "$reply_to" < "$out" 2>/dev/null | tr -d '\r' | tail -n 1)
+        result=$(cd "$install_dir" && docker compose exec -T backend python -m app.support_cli send --zip - $send_args --reply-to "$reply_to" < "$out" 2>/dev/null | tr -d '\r' | tail -n 1)
       else
-        result=$(cd "$install_dir" && docker compose exec -T backend python -m app.support_cli send --zip - < "$out" 2>/dev/null | tr -d '\r' | tail -n 1)
+        result=$(cd "$install_dir" && docker compose exec -T backend python -m app.support_cli send --zip - $send_args < "$out" 2>/dev/null | tr -d '\r' | tail -n 1)
       fi
       if printf '%s' "$result" | grep -q '"sent": *true'; then
         sent_ok=1
@@ -399,13 +420,19 @@ README_EOF
     if [ "$sent_ok" -eq 1 ]; then
       if [ -n "$copy" ]; then echo "Sent to support@port-sight.com (copy to $copy)."; else echo "Sent to support@port-sight.com."; fi
     else
-      echo "Not sent: $reason."
+      echo "Not sent: ${reason%.}."
     fi
   fi
   if [ "$backend_up" -eq 0 ] || { [ "$send" -eq 1 ] && [ "$sent_ok" -eq 0 ]; }; then
     echo "Copy the archive to your computer and email it to support@port-sight.com:"
     echo "  scp $(id -un 2>/dev/null || echo "$USER")@$(hostname):$out ."
   fi
+  # Only true where the daily cleanup looks: the install folder itself.
+  case "$out" in
+    "$install_dir"/port-sight-support-*|"$install_dir"/port-sight-host-logs-*)
+      case "${out#"$install_dir"/}" in */*) ;; *) echo "The host copy of this archive is removed automatically after 14 days." ;; esac ;;
+    *) echo "This archive is outside the install folder, so the daily cleanup will not remove it." ;;
+  esac
   echo "$out"
 }
 

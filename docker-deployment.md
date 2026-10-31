@@ -1121,7 +1121,9 @@ uptimes plus large deletes can leave the kernel unable to hand Docker the
 contiguous memory a new container needs). Since v2.18.9 it also hands the
 host's network, route, gateway, clock-source and time-sync facts to the
 backend, so a support bundle made from the web UI carries the host's state
-as of the last run (the bundle says how old it is). It logs to
+as of the last run (the bundle says how old it is), and removes support
+archives older than 14 days that `collect-logs` left in the install folder
+(nothing else). It logs to
 `/var/log/port-sight-maintenance.log`. Installing it needs root; if the
 installer could not (no sudo), do it once:
 
@@ -1416,6 +1418,10 @@ When the web UI is unreachable (the containers will not start, or the server ans
 **What you get.** One archive. The script first collects what the host knows: `compose-ps.txt` (container status), `logs/<service>.log` (the last 2,000 lines of each container, or `--lines N`), `compose.yml` with secrets blanked, `env-keys.txt` (setting names only), and `host.txt` (disk, memory, Docker and Compose versions, hypervisor, network interfaces, routes, gateway reachability per default route, clock source, time sync state, IP forwarding and whether Docker's NAT rules are present). If the backend container is running, the script then asks it to add the application's own bundle (version, health, settings without secrets, recent polls, switches, collector and scheduler state, the diagnosis findings, the backend log) and saves the result as `port-sight-support-<UTC time>.zip`. If the backend is not running you get the host part alone, named `port-sight-host-logs-<UTC time>.zip`, and the script says so.
 
 **Sending it.** With `--send`, the backend emails the archive to support@port-sight.com through the SMTP settings configured under Settings > Email, with a copy to `--reply-to` or, failing that, to the first administrator who has an email address. The mail body carries the diagnosis findings, so support reads the likely cause before opening the zip. The script prints `Sent to ...` or `Not sent: <reason>`. Whenever it cannot send, and whenever the backend is down, it prints the manual path: copy the file to your computer with `scp` and email it to support@port-sight.com yourself.
+
+**Later, from the web UI.** When the backend added its bundle, it also keeps a copy, and the script says so. Admin > System > Support archives lists those copies with when each was made, its size, and whether it was sent, with **Download**, **Send to support** and **Delete** on each and **Delete all** for the lot. So an archive made while the browser was unreachable can be sent once the UI works again, without copying files off the server. Port-Sight keeps the 20 newest and refuses a single archive over 50 MB.
+
+**Disk space.** The file the script leaves in the install folder is removed by the daily maintenance job after 14 days; the script tells you so, or tells you when the file is outside the install folder and will not be cleaned up. The copies inside Port-Sight stay until you delete them or newer ones push them out.
 
 **What it never contains:** `.env` values (only the setting names), passwords, SNMP credentials, API keys or tokens. Any compose-file line whose key contains password, secret, key or token has its value replaced by `<redacted>`, and the application's redactor runs over everything it adds. If a command fails or a tool is not installed, that is written into the member and the rest is still collected.
 
