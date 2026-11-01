@@ -1,0 +1,166 @@
+{
+  "rule": "github-slugger",
+  "note": "Heading text is the raw markdown heading line after the hashes. anchor is what github-slugger 2.0.0 returns for it with a fresh slugger. duplicate_runs: the same heading repeated in one document gets -1, -2, ... in order.",
+  "pairs": [
+    {
+      "heading": "1. Welcome to Port-Sight",
+      "anchor": "1-welcome-to-port-sight"
+    },
+    {
+      "heading": "3.1 The header bar",
+      "anchor": "31-the-header-bar"
+    },
+    {
+      "heading": "6.10 Report Builder",
+      "anchor": "610-report-builder"
+    },
+    {
+      "heading": "Chapter 6a — Built-in Reports",
+      "anchor": "chapter-6a--built-in-reports"
+    },
+    {
+      "heading": "Chapter 7 — Tags, Labels, and Tag Rules",
+      "anchor": "chapter-7--tags-labels-and-tag-rules"
+    },
+    {
+      "heading": "9. Single Sign-On with SAML **`Admin only`**",
+      "anchor": "9-single-sign-on-with-saml-admin-only"
+    },
+    {
+      "heading": "9.2 Access modes — who gets in, and who's an admin",
+      "anchor": "92-access-modes--who-gets-in-and-whos-an-admin"
+    },
+    {
+      "heading": "9.4 Setting up Microsoft Entra ID (Azure AD) — step by step",
+      "anchor": "94-setting-up-microsoft-entra-id-azure-ad--step-by-step"
+    },
+    {
+      "heading": "11.5 Admin: Catalyst Center and MAC table coverage `Admin only`",
+      "anchor": "115-admin-catalyst-center-and-mac-table-coverage-admin-only"
+    },
+    {
+      "heading": "Frequent Reloaders banner **`Admin only` action**",
+      "anchor": "frequent-reloaders-banner-admin-only-action"
+    },
+    {
+      "heading": "What's in this guide",
+      "anchor": "whats-in-this-guide"
+    },
+    {
+      "heading": "Unused (≥ N days)",
+      "anchor": "unused--n-days"
+    },
+    {
+      "heading": "Reports → Link Events",
+      "anchor": "reports--link-events"
+    },
+    {
+      "heading": "Settings > Outages",
+      "anchor": "settings--outages"
+    },
+    {
+      "heading": "Uplinks / Excluded / Admin-down checkboxes",
+      "anchor": "uplinks--excluded--admin-down-checkboxes"
+    },
+    {
+      "heading": "Avg In / Avg Out (since boot)",
+      "anchor": "avg-in--avg-out-since-boot"
+    },
+    {
+      "heading": "Changing your password (local accounts)",
+      "anchor": "changing-your-password-local-accounts"
+    },
+    {
+      "heading": "What \"normal\" means",
+      "anchor": "what-normal-means"
+    },
+    {
+      "heading": "\"I can't access the web interface at all\"",
+      "anchor": "i-cant-access-the-web-interface-at-all"
+    },
+    {
+      "heading": "\"502 Bad Gateway\" or \"Connection refused\" after an update",
+      "anchor": "502-bad-gateway-or-connection-refused-after-an-update"
+    },
+    {
+      "heading": "\"dependency db failed to start\" / database container unhealthy after an update",
+      "anchor": "dependency-db-failed-to-start--database-container-unhealthy-after-an-update"
+    },
+    {
+      "heading": "Snapshot says \"no flows\" / \"collector unreachable\" / \"no subnets\"",
+      "anchor": "snapshot-says-no-flows--collector-unreachable--no-subnets"
+    },
+    {
+      "heading": "A device shows \"down\" on Reports > Availability but it is up",
+      "anchor": "a-device-shows-down-on-reports--availability-but-it-is-up"
+    },
+    {
+      "heading": "Exporter shows as a Docker gateway address (172.x.x.1) instead of the real device",
+      "anchor": "exporter-shows-as-a-docker-gateway-address-172xx1-instead-of-the-real-device"
+    },
+    {
+      "heading": "Exporter sends but never appears (v2.13.1)",
+      "anchor": "exporter-sends-but-never-appears-v2131"
+    },
+    {
+      "heading": "\"Maintenance windows: removing N tag assignment(s) for switches that no longer exist\"",
+      "anchor": "maintenance-windows-removing-n-tag-assignments-for-switches-that-no-longer-exist"
+    },
+    {
+      "heading": "Backup / Restore fails",
+      "anchor": "backup--restore-fails"
+    },
+    {
+      "heading": "1. Are all containers running?",
+      "anchor": "1-are-all-containers-running"
+    },
+    {
+      "heading": "Step 4 (optional) — Remove pulled Docker images",
+      "anchor": "step-4-optional--remove-pulled-docker-images"
+    },
+    {
+      "heading": "Option A — Request a certificate from your IT team or company CA",
+      "anchor": "option-a--request-a-certificate-from-your-it-team-or-company-ca"
+    },
+    {
+      "heading": "Option C — Free certificate from Let's Encrypt",
+      "anchor": "option-c--free-certificate-from-lets-encrypt"
+    },
+    {
+      "heading": "Step 0 — set these four values",
+      "anchor": "step-0--set-these-four-values"
+    },
+    {
+      "heading": "Linux (RHEL / CentOS / Rocky / AlmaLinux / Fedora)",
+      "anchor": "linux-rhel--centos--rocky--almalinux--fedora"
+    },
+    {
+      "heading": "Quick Install (Recommended)",
+      "anchor": "quick-install-recommended"
+    },
+    {
+      "heading": "Reachable by SSH and ping, not by browser",
+      "anchor": "reachable-by-ssh-and-ping-not-by-browser"
+    },
+    {
+      "heading": "\"Login page says: Unable to connect to the backend server\"",
+      "anchor": "login-page-says-unable-to-connect-to-the-backend-server"
+    }
+  ],
+  "duplicate_runs": [
+    {
+      "headings": [
+        "Same",
+        "Same",
+        "Same",
+        "Other"
+      ],
+      "anchors": [
+        "same",
+        "same-1",
+        "same-2",
+        "other"
+      ]
+    }
+  ]
+}
